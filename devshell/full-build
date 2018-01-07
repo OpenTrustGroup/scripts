@@ -12,3 +12,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 
 fx-command-run build-zircon
 fx-command-run build
+fx-command-run build-linux
+fx-command-run build-linux-rootfs
+fx-command-run build-atf
+fx-command-run build-qemu
+fx-command-run build-soc-term

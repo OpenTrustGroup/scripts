@@ -1,0 +1,80 @@
+#!/bin/bash
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build Linux rootfs
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
+readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
+readonly GEN_ROOTFS_PATH="${FUCHSIA_DIR}/gen_rootfs"
+readonly BUSYBOX_COMMON_TARGET="fvp"
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+export PATH=${PATH}:${LINUX_BUILDROOT}/usr
+export BUSYBOX_PATH="${FUCHSIA_DIR}/third_party/busybox"
+export ROOTFS_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux-rootfs"
+export VERBOSE="${VERBOSE}"
+
+declare EXTRA_ROOTFS_FILELIST="${ROOTFS_BUILDROOT}/filelist-tee.txt"
+declare VERBOSE="${VERBOSE:-0}"
+declare CLEAN="${CLEAN:-false}"
+
+usage() {
+  printf '%s: [-c] [-v]\n' "$0"
+  printf '  -c            clean & build\n'
+  printf '  -v            show verbose compiling messages\n'
+}
+
+while getopts "chv" opt; do
+  case "${opt}" in
+    c) CLEAN="true" ;;
+    h) usage ; exit 0 ;;
+    v) VERBOSE="1" ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ "${USE_CCACHE}" = "1" ]]; then
+  export CROSS_COMPILE="$(which ccache) ${TOOLCHAIN_PREFIX}"
+else
+  export CROSS_COMPILE="${TOOLCHAIN_PREFIX}"
+fi
+
+cd ${GEN_ROOTFS_PATH}
+
+# Build busybox and prepare common filelist: filelist-final.txt
+if [[ "${CLEAN}" = "true" ]]; then
+  echo "Cleaning gen_rootfs build dir..."
+  rm -rf -- "${ROOTFS_BUILDROOT}"
+fi
+
+mkdir -p ${ROOTFS_BUILDROOT}
+
+TRACE=${TRACE} ./generate-cpio-rootfs.sh ${BUSYBOX_COMMON_TARGET}
+
+# prepare extra filelist
+append_to_extra_filelist() {
+  for ENTRY in "$@"; do
+    echo "${ENTRY}" >> ${EXTRA_ROOTFS_FILELIST}
+  done
+}
+
+echo "# filelist-tee-common /start" > ${EXTRA_ROOTFS_FILELIST}
+
+extra_filelist_entry=(
+  "# filelist-tee-common /end"
+)
+append_to_extra_filelist "${extra_filelist_entry[@]}"
+
+# Merge common and extra filelists and generate rootfs image
+cd ${ROOTFS_BUILDROOT}
+
+cat filelist-final.txt > filelist.tmp
+cat ${EXTRA_ROOTFS_FILELIST} >> filelist.tmp
+
+${LINUX_BUILDROOT}/usr/gen_init_cpio filelist.tmp | gzip > filesystem.cpio.gz

@@ -63,8 +63,8 @@ build() {
     --disable-vhost-vsock \
     --disable-libusb \
     --disable-smartcard \
-    --disable-tools \
     --disable-tasn1
+
   make -j "${jobs}"
   make DESTDIR="${destdir}/qemu-${HOST_TRIPLE}" install
   popd

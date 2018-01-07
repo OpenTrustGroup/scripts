@@ -11,9 +11,16 @@ fi
 export FUCHSIA_DIR="$(dirname $(dirname $(dirname "${devshell_lib_dir}")))"
 export FUCHSIA_OUT_DIR="${FUCHSIA_OUT_DIR:-${FUCHSIA_DIR}/out}"
 export FUCHSIA_CONFIG="${FUCHSIA_CONFIG:-${FUCHSIA_DIR}/.config}"
+export TOOLCHAIN_CONFIG="${FUCHSIA_DIR}/.toolchain_config"
 unset devshell_lib_dir
 
 export ZIRCON_TOOLS_DIR="${FUCHSIA_OUT_DIR}/build-zircon/tools"
+
+HOST_ARCH="$(uname -m)"
+HOST_OS="$(uname | tr '[:upper:]' '[:lower:]')"
+HOST_TRIPLE="${HOST_ARCH}-${HOST_OS}"
+
+export THIRD_PARTY_QEMU_BIN="${FUCHSIA_OUT_DIR}/qemu-${HOST_TRIPLE}/bin"
 
 if [[ "${FUCHSIA_DEVSHELL_VERBOSITY}" -eq 1 ]]; then
   set -x
@@ -25,6 +32,10 @@ function fx-config-read-if-present {
   fi
 
   source "${FUCHSIA_CONFIG}"
+
+  if [[ -f "${TOOLCHAIN_CONFIG}" ]]; then
+    source ${TOOLCHAIN_CONFIG}
+  fi
 
   # Paths are relative to FUCHSIA_DIR unless they're absolute paths.
   if [[ "${FUCHSIA_BUILD_DIR:0:1}" == "/" ]]; then

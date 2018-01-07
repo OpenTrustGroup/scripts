@@ -1,0 +1,71 @@
+#!/bin/bash
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### start gzOS in qemu
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+if [[ -d "${THIRD_PARTY_QEMU_BIN}" ]]; then
+  qemu_dir="${THIRD_PARTY_QEMU_BIN}"
+else
+  qemu_dir="${BUILDTOOLS_QEMU_DIR}/bin"
+fi
+
+case "$FUCHSIA_ARCH" in
+aarch64) arch=arm64 ;;
+*) echo >&2 "Unexpected FUCHSIA_ARCH=$FUCHSIA_ARCH"; exit 2 ;;
+esac
+
+readonly ATF_BUILDROOT="${FUCHSIA_OUT_DIR}/build-atf"
+readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
+readonly ROOTFS_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux-rootfs"
+readonly SOC_TERM_PATH="${FUCHSIA_DIR}/third_party/soc_term"
+readonly gnome_terminal="$(command -v gnome-terminal 2>/dev/null)"
+readonly xterm="$(command -v xterm 2>/dev/null)"
+
+launch-terminal() {
+  if [[ ! -z "${gnome_terminal}" ]];then
+    nc -z  127.0.0.1 ${1} || ${gnome_terminal} -t "${2}" -x ${SOC_TERM_PATH}/soc_term ${1} &
+  elif [[ ! -z "${xterm}" ]];then
+    nc -z  127.0.0.1 ${1} || ${xterm} -title "${2}" -e ${BASH} -c "${SOC_TERM_PATH}/soc_term ${1}" &
+  else
+    echo "Error: could not find gnome-terminal nor xterm"
+    exit 1
+  fi
+}
+
+run-help() {
+  echo
+  echo \* QEMU is now waiting to start the execution
+  echo \* Start execution with either a \'c\' followed by \<enter\> in the QEMU console or
+  echo \* attach a debugger and continue from there.
+  echo
+}
+
+wait-for-ports() {
+  while ! nc -z 127.0.0.1 ${1} || ! nc -z 127.0.0.1 ${2}; do sleep 1; done
+}
+
+run-help
+launch-terminal 54320 "Normal World"
+launch-terminal 54321 "Secure World"
+wait-for-ports 54320 54321
+
+declare QEMU_EXTRA_ARGS=""
+
+# Launch QEMU
+cd ${ATF_BUILDROOT}/qemu/release/
+
+${qemu_dir}/qemu-system-aarch64 \
+  -nographic \
+  -serial tcp:localhost:54320 -serial tcp:localhost:54321 \
+  -machine virt,secure=on -cpu cortex-a57 -m 1057 -bios ${ATF_BUILDROOT}/qemu/release/bl1.bin \
+  -s -S -semihosting-config enable,target=native -d unimp \
+  -initrd ${ROOTFS_BUILDROOT}/filesystem.cpio.gz \
+  -kernel ${LINUX_BUILDROOT}/arch/arm64/boot/Image -no-acpi \
+  -append 'console=ttyAMA0,38400 keep_bootcon root=/dev/vda2' ${QEMU_EXTRA_ARGS}

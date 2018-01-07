@@ -7,7 +7,7 @@ set -e
 
 function usage {
   cat <<END
-usage: bootstrap [zircon|garnet|peridot|topaz]
+usage: bootstrap [zircon|gzos]
 
 Bootstrap a Fuchsia development environment for the given layer. Defaults to
 boostraping at the topaz layer. For more information about the Fuchsia layer
@@ -20,18 +20,16 @@ if [[ $# -gt 1 ]]; then
   exit 1
 fi
 
-layer=${1:-topaz}
+layer=${1:-gzos}
 
 if [[ "${layer}" != "zircon" ]] &&
-   [[ "${layer}" != "garnet" ]] &&
-   [[ "${layer}" != "peridot" ]] &&
-   [[ "${layer}" != "topaz" ]]; then
+   [[ "${layer}" != "gzos" ]]; then
   usage
   exit 1
 fi
 
 if [[ "${layer}" == "zircon" ]]; then
-  git clone https://fuchsia.googlesource.com/zircon
+  git clone ssh://review.gerrithub.io:29418/OpenTrustGroup/zircon
   cat <<END
 Cloned ${layer} repository at "$(pwd)/zircon".
 See <https://fuchsia.googlesource.com/zircon/+/master/docs/getting_started.md>
@@ -43,7 +41,7 @@ fi
 curl -s "https://fuchsia.googlesource.com/jiri/+/master/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s "${layer}"
 cd "${layer}"
 
-.jiri_root/bin/jiri import -name="${layer}" "manifest/${layer}" "https://fuchsia.googlesource.com/${layer}"
+.jiri_root/bin/jiri import -name="garnet" -remote-branch="gzos" "manifest/garnet" "ssh://review.gerrithub.io:29418/OpenTrustGroup/garnet"
 
 .jiri_root/bin/jiri update
 

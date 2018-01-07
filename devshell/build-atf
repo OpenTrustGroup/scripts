@@ -1,0 +1,73 @@
+#!/bin/bash
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build arm-trusted-firmware
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+readonly ATF_PATH="${FUCHSIA_DIR}/arm-trusted-firmware"
+readonly ATF_BUILDROOT="${FUCHSIA_OUT_DIR}/build-atf"
+readonly SCRIPT_DIR="${FUCHSIA_DIR}/scripts"
+readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
+readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
+readonly BL32_BIN="${ZIRCON_BUILD_DIR}/zircon.bin"
+readonly BL32_EXTRA1_BIN="${FUCHSIA_DIR}/${FUCHSIA_BUILD_DIR}/bootdata-blobstore-arm64.bin"
+readonly BL33_BIN="${SCRIPT_DIR}/prebuilt/edk2/QEMU_EFI.fd"
+# TODO: change to gzOS's SPD after finishing TEE bringup
+readonly SPD=none
+
+JOBS=`getconf _NPROCESSORS_ONLN` || {
+  Cannot get number of processors
+  exit 1
+}
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+
+declare VERBOSE="${VERBOSE:-0}"
+declare CLEAN="${CLEAN:-false}"
+declare PLATFORM="${PLATFORM:-qemu}"
+declare ATF_FLAGS="ARM_TSP_RAM_LOCATION=tdram DEBUG=0 LOG_LEVEL=50 BL32_RAM_LOCATION=tdram SPD=${SPD}"
+
+usage() {
+  printf '%s: [-c] [-v] [-p platform]\n' "$0"
+  printf '  -c            clean & build\n'
+  printf '  -v            show verbose compiling messages\n'
+  printf '  -p [platform] select which platform to build, default: %s\n' "${PLATFORM}"
+}
+
+while getopts "chp:v" opt; do
+  case "${opt}" in
+    c) CLEAN="true" ;;
+    h) usage ; exit 0 ;;
+    p) PLATFORM="${OPTARG}" ;;
+    v) VERBOSE="1" ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ "${USE_CCACHE}" = "1" ]]; then
+  export CROSS_COMPILE="$(which ccache) ${TOOLCHAIN_PREFIX}"
+else
+  export CROSS_COMPILE="${TOOLCHAIN_PREFIX}"
+fi
+
+if [[ "${CLEAN}" = "true" ]]; then
+  echo "Cleaning arm-trusted-firmware..."
+  rm -rf -- "${ATF_BUILDROOT}"
+fi
+
+echo "Building arm-trusted-firmware..."
+ATF_FLAGS="${ATF_FLAGS} BL32=${BL32_BIN} BL33=${BL33_BIN} PLAT=${PLATFORM}"
+
+cd ${ATF_PATH}
+make -j ${JOBS} -e "BUILD_BASE=${ATF_BUILDROOT}" V=${VERBOSE} ${ATF_FLAGS} all fip
+
+ln -sf ${BL32_BIN} ${ATF_BUILDROOT}/${PLATFORM}/release/bl32.bin
+# TODO: investigate if gzos needs bl32_extra1 and bl32_extra2
+#ln -sf $(BL32_EXTRA1_BIN) ${ATF_BUILDROOT}/${PLATFORM}/release/bl32_extra1.bin
+#ln -sf $(BL32_EXTRA2_BIN) ${ATF_BUILDROOT}/${PLATFORM}/release/bl32_extra2.bin
+ln -sf ${BL33_BIN} ${ATF_BUILDROOT}/${PLATFORM}/release/bl33.bin

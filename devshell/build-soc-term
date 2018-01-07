@@ -1,0 +1,14 @@
+#!/bin/bash
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build third_party/soc_term
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+readonly SOC_TERM_PATH="${FUCHSIA_DIR}/third_party/soc_term"
+
+echo "Building third_party/soc_term..."
+make -C ${SOC_TERM_PATH}
