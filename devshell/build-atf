@@ -13,11 +13,23 @@ readonly ATF_BUILDROOT="${FUCHSIA_OUT_DIR}/build-atf"
 readonly SCRIPT_DIR="${FUCHSIA_DIR}/scripts"
 readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
 readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
-readonly BL32_BIN="${ZIRCON_BUILD_DIR}/zircon.bin"
-readonly BL32_EXTRA1_BIN="${FUCHSIA_DIR}/${FUCHSIA_BUILD_DIR}/bootdata-blobstore-arm64.bin"
+readonly TRUSTY_BUILDROOT="${FUCHSIA_OUT_DIR}/build-trusty"
 readonly BL33_BIN="${SCRIPT_DIR}/prebuilt/edk2/QEMU_EFI.fd"
-# TODO: change to gzOS's SPD after finishing TEE bringup
-readonly SPD=none
+
+declare BL32_BIN=""
+declare BL32_EXTRA1_BIN=""
+declare BL32_EXTRA2_BIN=""
+declare SPD="none"
+
+if [[ "${TEE}" = "gzos" ]]; then
+  BL32_BIN="${ZIRCON_BUILD_DIR}/zircon.bin"
+  BL32_EXTRA1_BIN="${FUCHSIA_BUILD_DIR}/bootdata-blobstore-arm64.bin"
+  BL32_EXTRA2_BIN=""
+  SPD=trusty
+elif [[ "${TEE}" = "trusty" ]]; then
+  BL32_BIN="${TRUSTY_BUILDROOT}/lk.bin"
+  SPD=trusty
+fi
 
 JOBS=`getconf _NPROCESSORS_ONLN` || {
   Cannot get number of processors
@@ -30,21 +42,24 @@ set -eo pipefail; [[ "${TRACE}" ]] && set -x
 declare VERBOSE="${VERBOSE:-0}"
 declare CLEAN="${CLEAN:-false}"
 declare PLATFORM="${PLATFORM:-qemu}"
-declare ATF_FLAGS="ARM_TSP_RAM_LOCATION=tdram DEBUG=0 LOG_LEVEL=50 BL32_RAM_LOCATION=tdram SPD=${SPD}"
+declare ATF_FLAGS=""
+declare DEBUG_BUILD="0"
 
 usage() {
-  printf '%s: [-c] [-v] [-p platform]\n' "$0"
+  printf '%s: [-c] [-v] [-d] [-p platform]\n' "$0"
   printf '  -c            clean & build\n'
   printf '  -v            show verbose compiling messages\n'
+  printf '  -d            debug build (images with debug info), default: release build\n'
   printf '  -p [platform] select which platform to build, default: %s\n' "${PLATFORM}"
 }
 
-while getopts "chp:v" opt; do
+while getopts "chp:vd" opt; do
   case "${opt}" in
     c) CLEAN="true" ;;
     h) usage ; exit 0 ;;
     p) PLATFORM="${OPTARG}" ;;
     v) VERBOSE="1" ;;
+    d) DEBUG_BUILD="1" ;;
     *) usage 1>&2 ; exit 1 ;;
   esac
 done
@@ -60,14 +75,35 @@ if [[ "${CLEAN}" = "true" ]]; then
   rm -rf -- "${ATF_BUILDROOT}"
 fi
 
+if [[ "${DEBUG_BUILD}" = "1" ]]; then
+  declare VARIANT="debug"
+else
+  declare VARIANT="release"
+fi
+
 echo "Building arm-trusted-firmware..."
-ATF_FLAGS="${ATF_FLAGS} BL32=${BL32_BIN} BL33=${BL33_BIN} PLAT=${PLATFORM}"
+ATF_FLAGS="${ATF_FLAGS} BL32=${BL32_BIN} BL33=${BL33_BIN}"
+ATF_FLAGS="${ATF_FLAGS} BL32_EXTRA1=${BL32_EXTRA1_BIN} BL32_EXTRA2=${BL32_EXTRA2_BIN}"
+ATF_FLAGS="${ATF_FLAGS} PLAT=${PLATFORM} SPD=${SPD}"
+ATF_FLAGS="${ATF_FLAGS} ARM_TSP_RAM_LOCATION=tdram DEBUG=${DEBUG_BUILD} LOG_LEVEL=50 BL32_RAM_LOCATION=tdram"
+ATF_FLAGS="${ATF_FLAGS} BUILD_BASE=${ATF_BUILDROOT} V=${VERBOSE}"
+
+if [[ "${TEE}" = "trusty" ]]; then
+  ATF_FLAGS="${ATF_FLAGS} TRUSTY_SPD_WITH_GENERIC_SERVICES=1"
+fi
 
 cd ${ATF_PATH}
-make -j ${JOBS} -e "BUILD_BASE=${ATF_BUILDROOT}" V=${VERBOSE} ${ATF_FLAGS} all fip
+make -C ${ATF_PATH} ${ATF_FLAGS} all fip
 
-ln -sf ${BL32_BIN} ${ATF_BUILDROOT}/${PLATFORM}/release/bl32.bin
-# TODO: investigate if gzos needs bl32_extra1 and bl32_extra2
-#ln -sf $(BL32_EXTRA1_BIN) ${ATF_BUILDROOT}/${PLATFORM}/release/bl32_extra1.bin
-#ln -sf $(BL32_EXTRA2_BIN) ${ATF_BUILDROOT}/${PLATFORM}/release/bl32_extra2.bin
-ln -sf ${BL33_BIN} ${ATF_BUILDROOT}/${PLATFORM}/release/bl33.bin
+echo "Creating symbolic link to BL32 and BL33 boot images"
+rm -f ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32*.bin
+
+[[ ! -z "${BL32_BIN}" ]] && ln -sf ${BL32_BIN} ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32.bin
+[[ ! -z "${BL32_EXTRA1_BIN}" ]] && ln -sf $(BL32_EXTRA1_BIN) ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32_extra1.bin
+[[ ! -z "${BL32_EXTRA2_BIN}" ]] && ln -sf $(BL32_EXTRA2_BIN) ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32_extra2.bin
+
+rm -f ${ATF_BUILDROOT}/bl33.bin
+ln -sf ${BL33_BIN} ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl33.bin
+
+rm -f ${ATF_BUILDROOT}/images
+ln -sf ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT} ${ATF_BUILDROOT}/images

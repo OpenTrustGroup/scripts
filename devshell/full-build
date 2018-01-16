@@ -9,9 +9,15 @@
 set -e
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
 
-fx-command-run build-zircon
-fx-command-run build
+if [[ ${TEE} = "gzos" ]]; then
+  fx-command-run build-zircon
+  fx-command-run build
+elif [[ ${TEE} = "trusty" ]]; then
+  fx-command-run build-trusty
+fi
+
 fx-command-run build-linux
 fx-command-run build-linux-rootfs
 fx-command-run build-atf

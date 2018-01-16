@@ -1,0 +1,78 @@
+#!/bin/bash
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build Google Trusty Secure OS
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+readonly TRUSTY_PATH="${FUCHSIA_DIR}/trusty"
+readonly TRUSTY_BUILDROOT="${FUCHSIA_OUT_DIR}/build-trusty"
+readonly TRUSTY_ARM64_TOOLCHAIN_PATH="${TRUSTY_PATH}/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.8"
+readonly TRUSTY_ARM32_TOOLCHAIN_PATH="${TRUSTY_PATH}/prebuilts/gcc/linux-x86/arm/arm-eabi-4.8"
+
+JOBS=`getconf _NPROCESSORS_ONLN` || {
+  Cannot get number of processors
+  exit 1
+}
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+
+declare VERBOSE="${VERBOSE:-0}"
+declare CLEAN="${CLEAN:-false}"
+declare PROJECT="${TRUSTY_PROJECT:-generic-arm64-test}"
+declare NOECHO="@"
+declare TRUSTY_FLAGS=""
+
+usage() {
+  printf '%s: [-c] [-v] [-l] [-p project]\n' "$0"
+  printf '  -c            clean & build\n'
+  printf '  -v            show verbose compiling messages\n'
+  printf '  -l            list projects\n'
+  printf '  -p [project]  select which project to build, default: %s\n' "${PROJECT}"
+}
+
+while getopts "chp:vl" opt; do
+  case "${opt}" in
+    c) CLEAN="true" ;;
+    h) usage ; exit 0 ;;
+    p) PROJECT="${OPTARG}" ;;
+    v) VERBOSE="1" ;;
+    l) cd ${TRUSTY_PATH} ; make list ; exit 0 ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ "${USE_CCACHE}" = "1" ]]; then
+  export CCACHE="$(which ccache)"
+fi
+
+if [[ "${VERBOSE}" = "1" ]]; then
+  NOECHO=""
+fi
+
+# Trusty makefile can auto probe toolchain path by 'which xxx' shell command
+export PATH=${TRUSTY_ARM64_TOOLCHAIN_PATH}/bin:${TRUSTY_ARM32_TOOLCHAIN_PATH}/bin:${PATH}
+
+if [[ "${CLEAN}" = "true" ]]; then
+  echo "Cleaning trusty..."
+  rm -rf -- "${TRUSTY_BUILDROOT}"
+fi
+
+echo "Installing Trusty makefiles..."
+cp ${TRUSTY_PATH}/external/lk/makefile ${TRUSTY_PATH}
+cp ${TRUSTY_PATH}/vendor/google/aosp/lk_inc.mk ${TRUSTY_PATH}
+
+echo "Building trusty..."
+rm -f ${TRUSTY_BUILDROOT}/lk.bin
+
+cd ${TRUSTY_PATH}
+BUILDROOT=${TRUSTY_BUILDROOT} \
+DEFAULT_PROJECT=${PROJECT} \
+NOECHO=${NOECHO} \
+make -j ${JOBS} ${TRUSTY_FLAGS} all
+
+ln -s ${TRUSTY_BUILDROOT}/build-${PROJECT}/lk.bin ${TRUSTY_BUILDROOT}/lk.bin

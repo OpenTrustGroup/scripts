@@ -3,7 +3,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-### start gzOS in qemu
+### start TEE in qemu
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
 source "${FUCHSIA_DIR}/buildtools/vars.sh"
@@ -57,14 +57,15 @@ launch-terminal 54321 "Secure World"
 wait-for-ports 54320 54321
 
 declare QEMU_EXTRA_ARGS=""
+#QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -d guest_errors" # Show error messages when accessing registers
 
 # Launch QEMU
-cd ${ATF_BUILDROOT}/qemu/release/
+cd ${ATF_BUILDROOT}/images/
 
 ${qemu_dir}/qemu-system-aarch64 \
   -nographic \
   -serial tcp:localhost:54320 -serial tcp:localhost:54321 \
-  -machine virt,secure=on -cpu cortex-a57 -m 1057 -bios ${ATF_BUILDROOT}/qemu/release/bl1.bin \
+  -machine virt,secure=on -cpu cortex-a57 -m 1057 -bios ${ATF_BUILDROOT}/images/bl1.bin \
   -s -S -semihosting-config enable,target=native -d unimp \
   -initrd ${ROOTFS_BUILDROOT}/filesystem.cpio.gz \
   -kernel ${LINUX_BUILDROOT}/arch/arm64/boot/Image -no-acpi \

@@ -7,11 +7,9 @@ set -e
 
 function usage {
   cat <<END
-usage: bootstrap [zircon|gzos]
+usage: bootstrap [gzos|trusty]
 
-Bootstrap a Fuchsia development environment for the given layer. Defaults to
-boostraping at the topaz layer. For more information about the Fuchsia layer
-cake, see <https://fuchsia.googlesource.com/docs/+/master/layers.md>.
+Bootstrap a TEE development environment. Default: gzos
 END
 }
 
@@ -20,30 +18,39 @@ if [[ $# -gt 1 ]]; then
   exit 1
 fi
 
-layer=${1:-gzos}
+tee=${1:-gzos}
 
-if [[ "${layer}" != "zircon" ]] &&
-   [[ "${layer}" != "gzos" ]]; then
+declare manifest_name=""
+declare manifest_file=""
+declare manifest_url=""
+declare manifest_branch=""
+
+if [[ "${tee}" == "gzos" ]]; then
+  manifest_name="garnet"
+  manifest_file="manifest/garnet"
+  manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/garnet"
+  manifest_branch="gzos"
+elif [[ "${tee}" == "trusty" ]]; then
+  manifest_name="trusty"
+  manifest_file="trusty"
+  manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/manifest"
+  manifest_branch="gzos"
+else
   usage
   exit 1
 fi
 
-if [[ "${layer}" == "zircon" ]]; then
-  git clone ssh://review.gerrithub.io:29418/OpenTrustGroup/zircon
-  cat <<END
-Cloned ${layer} repository at "$(pwd)/zircon".
-See <https://fuchsia.googlesource.com/zircon/+/master/docs/getting_started.md>
-for the remaining steps to create a functioning development environment.
-END
-  exit 0
-fi
+curl -s "https://fuchsia.googlesource.com/jiri/+/master/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s "${tee}"
+cd "${tee}"
 
-curl -s "https://fuchsia.googlesource.com/jiri/+/master/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s "${layer}"
-cd "${layer}"
-
-.jiri_root/bin/jiri import -name="garnet" -remote-branch="gzos" "manifest/garnet" "ssh://review.gerrithub.io:29418/OpenTrustGroup/garnet"
+.jiri_root/bin/jiri import -name="${manifest_name}" -remote-branch="${manifest_branch}" "${manifest_file}" "${manifest_url}"
 
 .jiri_root/bin/jiri update
 
-echo "Done creating ${layer} development environment at \"$(pwd)\"."
-echo "Recommended: export PATH=\"$(pwd)/.jiri_root/bin:\$PATH\""
+mkdir -p ~/bin
+cp .jiri_root/bin/jiri ~/bin
+rm -f ~/bin/fx
+ln -sf `pwd`/scripts/fx ~/bin
+
+echo "Done creating ${tee} development environment at \"$(pwd)\"."
+echo "Recommended: export PATH=\"$HOME/bin:\$PATH\"
