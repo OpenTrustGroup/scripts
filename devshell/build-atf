@@ -99,8 +99,8 @@ echo "Creating symbolic link to BL32 and BL33 boot images"
 rm -f ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32*.bin
 
 [[ ! -z "${BL32_BIN}" ]] && ln -sf ${BL32_BIN} ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32.bin
-[[ ! -z "${BL32_EXTRA1_BIN}" ]] && ln -sf $(BL32_EXTRA1_BIN) ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32_extra1.bin
-[[ ! -z "${BL32_EXTRA2_BIN}" ]] && ln -sf $(BL32_EXTRA2_BIN) ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32_extra2.bin
+[[ ! -z "${BL32_EXTRA1_BIN}" ]] && ln -sf ${BL32_EXTRA1_BIN} ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32_extra1.bin
+[[ ! -z "${BL32_EXTRA2_BIN}" ]] && ln -sf ${BL32_EXTRA2_BIN} ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl32_extra2.bin
 
 rm -f ${ATF_BUILDROOT}/bl33.bin
 ln -sf ${BL33_BIN} ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl33.bin
