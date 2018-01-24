@@ -16,11 +16,6 @@ else
   qemu_dir="${BUILDTOOLS_QEMU_DIR}/bin"
 fi
 
-case "$FUCHSIA_ARCH" in
-aarch64) arch=arm64 ;;
-*) echo >&2 "Unexpected FUCHSIA_ARCH=$FUCHSIA_ARCH"; exit 2 ;;
-esac
-
 readonly ATF_BUILDROOT="${FUCHSIA_OUT_DIR}/build-atf"
 readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
 readonly ROOTFS_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux-rootfs"

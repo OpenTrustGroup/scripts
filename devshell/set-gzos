@@ -1,0 +1,211 @@
+#!/bin/bash
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### set gzos build configuration
+
+## usage: fx set-gzos TARGET
+##               [--release] [--packages P1,P2,...]
+##               [--args ARG] [--help-args [ARG]] [--variant VARIANT]
+##               [--ccache]
+##
+## Sets gzos build options.
+##
+## required arguments:
+##   TARGET                Target platform or project
+##
+## optional arguments:
+##   --release             Build the release variant (e.g., more compiler
+##                         optimizations, less debugging information).
+##   --packages            Include the listed packages (separated by commas) in the
+##                         system build. Defaults to the default set of packages
+##                         for the current layer (e.g., "garnet/packages/default"
+##                         for the Garnet layer). If the --package argument is
+##                         given multiple times, all the specified packages are
+##                         included in the build.
+##   --variant             Pass --variant=VARIANT to gen.py, which itself is
+##                         a shorthand for setting the `select_variant` GN
+##                         build argument using a standard set of values.
+##                         Multiple --variant arguments can be used.
+##   --args                Additional argument to pass to gn. If the --args
+##                         argument is given multiple times, all the specified
+##                         arguments are passed to gn.
+##   --help-args           Display GN arguments documentation.  If --help-args
+##                         is followed by a GN build argument identifier, just
+##                         that argument's documentation is displayed.
+##                         If --help-args is used alone, all GN build arguments
+##                         are displayed (lots of output).
+##   --ccache              Whether to use ccache during the build. Ccache attempts
+##                         to make builds faster by caching build artifacts.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read-if-present
+
+readonly project_prefix="zircon" # TODO: change to gzos
+readonly support_arch="arm64"
+
+declare -A alias_projects=(
+  ["arm64"]="${project_prefix}-qemu-arm64"
+  ["aarch64"]="${project_prefix}-qemu-arm64"
+)
+
+function convert_to_gzos_project {
+  local platform=${1}
+  local arch=${2}
+  echo "${project_prefix}-${platform}-${arch}"
+}
+
+function get_project_arch {
+  local str=(${1//-/ })
+  local last_index=$(( ${#str[@]} - 1 ))
+  echo ${str[$last_index]}
+}
+
+declare project_list=""
+for arch in ${support_arch}; do
+  project_list="${project_list} $(ls ${FUCHSIA_DIR}/zircon/kernel/project/$(convert_to_gzos_project '*' ${arch}).mk | xargs -I{} basename -s .mk {})"
+done
+
+function list_projects {
+  echo  "available projects:"
+  echo  "-------------------"
+  for alias in "${!alias_projects[@]}"; do
+    printf "%-25s (alias of %s)\n" "${alias}" "${alias_projects["${alias}"]}"
+  done
+
+  for p in ${project_list}; do
+    printf "%-25s\n" "${p}"
+  done
+}
+
+function search_projects {
+  for alias in "${!alias_projects[@]}"; do
+    if [[ "${alias}" = "${1}" ]]; then
+      echo "${alias_projects["${alias}"]}"
+      return 0
+    fi
+  done
+
+  for p in ${project_list}; do
+    if [[ "${p}" = "${1}" ]]; then
+      echo "${p}"
+      return 0
+    fi
+  done
+
+  echo ""
+}
+
+
+function main {
+  if [[ $# -lt 1 ]]; then
+    list_projects
+    return 1
+  fi
+
+  local zircon_project="$(search_projects $1)"
+
+  if [[ -z "${zircon_project}" ]]; then
+    echo error: Unsupported project \"${1}\"
+    list_projects
+    return 1
+  fi
+
+  local arch="$(get_project_arch ${zircon_project})"
+  if [[ "${arch}" = "arm64" ]]; then
+    arch=aarch64
+  fi
+
+  local gen_args="${gen_args} --target_cpu ${arch} --platforms ${zircon_project}"
+  shift
+
+  local variant=debug
+  local packages=
+  local extra_packages=
+  local build_dir=
+  local ccache
+  while [[ $# -ne 0 ]]; do
+    case $1 in
+      --release)
+        gen_args="${gen_args} --release"
+        variant=release
+        ;;
+      --packages)
+        if [[ $# -lt 2 ]]; then
+          fx-command-help
+          return 1
+        fi
+        if [[ -z "${packages}" ]]; then
+          packages="$2"
+        else
+          packages="${packages},$2"
+        fi
+        shift
+        ;;
+# TODO: what the 2 options used for?
+#      --netboot)
+#        extra_packages="${extra_packages},build/packages/netboot"
+#        ;;
+#      --bootfs)
+#        extra_packages="${extra_packages},build/packages/bootfs"
+#        ;;
+      --variant)
+        if [[ $# -lt 2 ]]; then
+          fx-command-help
+          return 1
+        fi
+        gen_args="${gen_args} --variant $2"
+        shift
+        ;;
+      --args)
+        if [[ $# -lt 2 ]]; then
+          fx-command-help
+          return 1
+        fi
+        gen_args="${gen_args} --args $2"
+        shift
+        ;;
+      --help-args)
+        gen_args="${gen_args} --help-args"
+        if [[ $# -ge 2 ]] && [[ "$2" != '--*' ]]; then
+          gen_args="${gen_args} $2"
+          shift
+        fi
+        ;;
+      --ccache)
+        ccache=1
+        ;;
+      *)
+        fx-command-help
+        return 1
+    esac
+    shift
+  done
+
+  if [[ -n "${packages}" ]]; then
+    gen_args="${gen_args} --packages ${packages}${extra_packages}"
+  else
+    gen_args="${gen_args} --packages garnet/packages/gzos${extra_packages} --ignore-skia"
+  fi
+
+  # gen.py defaults to determining the build directory from the variant and
+  # the arch. We replicate that logic here rather than passing a redundant
+  # argument to gen.py.
+  build_dir="out/${variant}-${arch}"
+
+  # Update config file
+  cat >"${FUCHSIA_CONFIG}" <<END
+# Generated by "fx set-gzos".
+FUCHSIA_BUILD_DIR="${build_dir}"
+FUCHSIA_VARIANT="${variant}"
+FUCHSIA_ARCH="${arch}"
+ZIRCON_PROJECT="${zircon_project}"
+USE_CCACHE="${ccache}"
+TEE="gzos"
+END
+
+  "${FUCHSIA_DIR}/build/gn/gen.py" ${gen_args} "$@"
+}
+
+main "$@"
