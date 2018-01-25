@@ -42,7 +42,7 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read-if-present
 
-readonly project_prefix="zircon" # TODO: change to gzos
+readonly project_prefix="gzos"
 readonly support_arch="arm64"
 
 declare -A alias_projects=(
@@ -117,7 +117,7 @@ function main {
     arch=aarch64
   fi
 
-  local gen_args="${gen_args} --target_cpu ${arch} --platforms ${zircon_project}"
+  local gen_args="${gen_args} --target_cpu ${arch} --platforms ${zircon_project} --zircon-userspace-project-prefix gzos-"
   shift
 
   local variant=debug
