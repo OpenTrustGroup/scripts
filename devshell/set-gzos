@@ -42,7 +42,7 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read-if-present
 
-readonly project_prefix="zircon" # TODO: change to gzos
+readonly project_prefix="gzos"
 readonly support_arch="arm64"
 
 declare -A alias_projects=(
@@ -201,10 +201,12 @@ FUCHSIA_BUILD_DIR="${build_dir}"
 FUCHSIA_VARIANT="${variant}"
 FUCHSIA_ARCH="${arch}"
 ZIRCON_PROJECT="${zircon_project}"
+ZIRCON_USER_PROJECT="gzos-user"
 USE_CCACHE="${ccache}"
 TEE="gzos"
 END
 
+  gen_args="${gen_args} --args zircon_user_project=\"${ZIRCON_USER_PROJECT}\""
   "${FUCHSIA_DIR}/build/gn/gen.py" ${gen_args} "$@"
 }
 
