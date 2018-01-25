@@ -106,16 +106,23 @@ else
   readonly ASAN_ULIB=true
 fi
 
+for project in $PROJECTS; do
+    case "$project" in
+    *gzos*) readonly ZIRCON_USER_PROJECT="gzos-user" ;;
+    *) readonly ZIRCON_USER_PROJECT="user-" ;;
+    esac
+done
+
 # Build host tools.
 make_zircon_common \
   BUILDDIR=${OUTDIR}/build-zircon HOST_USE_ASAN="${HOST_ASAN}" tools
 
 for ARCH in "${ARCHLIST[@]}"; do
     # Build primary userland and sysroot.
-    make_zircon_target PROJECT="user-${ARCH}" \
+    make_zircon_target PROJECT="${ZIRCON_USER_PROJECT}-${ARCH}" \
         BUILDDIR_SUFFIX= USE_ASAN="${ASAN_ZIRCON}" user-only
     # Build alternate shared libraries (ASan).
-    make_zircon_target PROJECT="user-${ARCH}" \
+    make_zircon_target PROJECT="${ZIRCON_USER_PROJECT}-${ARCH}" \
         BUILDDIR_SUFFIX=-ulib USE_ASAN="${ASAN_ULIB}" \
         ENABLE_ULIB_ONLY=true ENABLE_BUILD_SYSROOT=false
 done
