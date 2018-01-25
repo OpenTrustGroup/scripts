@@ -8,5 +8,10 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read
 
+BUILD_FLAGS="-p ${ZIRCON_PROJECT}"
+if [[ ! -z ${ZIRCON_USER_PROJECT} ]]; then
+  BUILD_FLAGS="${BUILD_FLAGS} -u ${ZIRCON_USER_PROJECT}"
+fi
+
 echo "Building zircon..."
-"${FUCHSIA_DIR}/scripts/build-zircon.sh" -p "${ZIRCON_PROJECT}" "$@"
+"${FUCHSIA_DIR}/scripts/build-zircon.sh" ${BUILD_FLAGS} "$@"
