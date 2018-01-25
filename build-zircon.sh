@@ -18,7 +18,7 @@ JOBS=`getconf _NPROCESSORS_ONLN` || {
 set -eo pipefail; [[ "${TRACE}" ]] && set -x
 
 usage() {
-  printf '%s: [-c] [-v] [-V] [-A] [-H] [-p projects] [-t target] [-o outdir]\n' "$0"
+  printf '%s: [-c] [-v] [-V] [-A] [-H] [-p projects] [-u user_projects] [-t target] [-o outdir]\n' "$0"
   printf 'Note: Passing extra arguments to make is not supported.\n'
 }
 
@@ -37,8 +37,9 @@ declare CLEAN="${CLEAN:-false}"
 declare HOST_ASAN="${HOST_ASAN:-false}"
 declare OUTDIR="${OUTDIR:-${ROOT_DIR}/out}"
 declare VERBOSE="${VERBOSE:-0}"
+declare USER_PROJECTS="${USER_PROJECTS:-user}"
 
-while getopts "AcHht:p:o:vV" opt; do
+while getopts "AcHht:p:u:o:vV" opt; do
   case "${opt}" in
     A) ASAN="true" ;;
     c) CLEAN="true" ;;
@@ -47,6 +48,7 @@ while getopts "AcHht:p:o:vV" opt; do
     o) OUTDIR="${OPTARG}" ;;
     t) TARGET="${OPTARG}" ;;
     p) PROJECTS="${OPTARG}" ;;
+    u) USER_PROJECTS="${OPTARG}" ;;
     v) VERBOSE="1" ;;
     V) VERBOSE="2" ;;
     *) usage 1>&2 ; exit 1 ;;
@@ -111,13 +113,15 @@ make_zircon_common \
   BUILDDIR=${OUTDIR}/build-zircon HOST_USE_ASAN="${HOST_ASAN}" tools
 
 for ARCH in "${ARCHLIST[@]}"; do
-    # Build primary userland and sysroot.
-    make_zircon_target PROJECT="user-${ARCH}" \
-        BUILDDIR_SUFFIX= USE_ASAN="${ASAN_ZIRCON}" user-only
-    # Build alternate shared libraries (ASan).
-    make_zircon_target PROJECT="user-${ARCH}" \
-        BUILDDIR_SUFFIX=-ulib USE_ASAN="${ASAN_ULIB}" \
-        ENABLE_ULIB_ONLY=true ENABLE_BUILD_SYSROOT=false
+    for user_project in $USER_PROJECTS; do
+        # Build primary userland and sysroot.
+        make_zircon_target PROJECT="${user_project}-${ARCH}" \
+            BUILDDIR_SUFFIX= USE_ASAN="${ASAN_ZIRCON}" user-only
+        # Build alternate shared libraries (ASan).
+        make_zircon_target PROJECT="${user_project}-${ARCH}" \
+            BUILDDIR_SUFFIX=-ulib USE_ASAN="${ASAN_ULIB}" \
+            ENABLE_ULIB_ONLY=true ENABLE_BUILD_SYSROOT=false
+    done
 done
 
 # Build kernels and bootloaders.
