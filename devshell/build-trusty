@@ -12,6 +12,8 @@ readonly TRUSTY_PATH="${FUCHSIA_DIR}/trusty"
 readonly TRUSTY_BUILDROOT="${FUCHSIA_OUT_DIR}/build-trusty"
 readonly TRUSTY_ARM64_TOOLCHAIN_PATH="${TRUSTY_PATH}/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.8"
 readonly TRUSTY_ARM32_TOOLCHAIN_PATH="${TRUSTY_PATH}/prebuilts/gcc/linux-x86/arm/arm-eabi-4.8"
+readonly TIPC_TEST_PATH="${FUCHSIA_DIR}/third_party/tipc-test"
+readonly TIPC_TEST_BUILDROOT="${FUCHSIA_OUT_DIR}/build-tipc-test"
 
 JOBS=`getconf _NPROCESSORS_ONLN` || {
   Cannot get number of processors
@@ -60,6 +62,7 @@ export PATH=${TRUSTY_ARM64_TOOLCHAIN_PATH}/bin:${TRUSTY_ARM32_TOOLCHAIN_PATH}/bi
 if [[ "${CLEAN}" = "true" ]]; then
   echo "Cleaning trusty..."
   rm -rf -- "${TRUSTY_BUILDROOT}"
+  rm -rf -- "${TIPC_TEST_BUILDROOT}"
 fi
 
 echo "Installing Trusty makefiles..."
@@ -76,3 +79,7 @@ NOECHO=${NOECHO} \
 make -j ${JOBS} ${TRUSTY_FLAGS} all
 
 ln -s ${TRUSTY_BUILDROOT}/build-${PROJECT}/lk.bin ${TRUSTY_BUILDROOT}/lk.bin
+
+echo "Building tipc-test..."
+mkdir -p ${TIPC_TEST_BUILDROOT}
+CROSS_COMPILE="${LINARO_AARCH64_CROSS_COMPILE}" BUILD_DIR="${TIPC_TEST_BUILDROOT}" make -C ${TIPC_TEST_PATH} all

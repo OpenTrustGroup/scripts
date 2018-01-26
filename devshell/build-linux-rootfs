@@ -10,6 +10,7 @@ fx-config-read
 
 readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
 readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
+readonly TIPC_TEST_BUILDROOT="${FUCHSIA_OUT_DIR}/build-tipc-test"
 readonly GEN_ROOTFS_PATH="${FUCHSIA_DIR}/gen_rootfs"
 readonly BUSYBOX_COMMON_TARGET="fvp"
 
@@ -66,10 +67,15 @@ append_to_extra_filelist() {
 
 echo "# filelist-tee-common /start" > ${EXTRA_ROOTFS_FILELIST}
 
-extra_filelist_entry=(
-  "# filelist-tee-common /end"
-)
-append_to_extra_filelist "${extra_filelist_entry[@]}"
+if [[ "${TEE}" = "trusty" ]]; then
+  trusty_filelist_entry=(
+    "file /bin/tipc-test ${TIPC_TEST_BUILDROOT}/tipc-test 755 0 0"
+  )
+  append_to_extra_filelist "${trusty_filelist_entry[@]}"
+fi
+
+echo "# filelist-tee-common /end" >> ${EXTRA_ROOTFS_FILELIST}
+
 
 # Merge common and extra filelists and generate rootfs image
 cd ${ROOTFS_BUILDROOT}
