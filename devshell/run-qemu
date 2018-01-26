@@ -23,6 +23,30 @@ readonly SOC_TERM_PATH="${FUCHSIA_DIR}/third_party/soc_term"
 readonly gnome_terminal="$(command -v gnome-terminal 2>/dev/null)"
 readonly xterm="$(command -v xterm 2>/dev/null)"
 
+readonly DTB_FILE="${FUCHSIA_DIR}/qemu-virt.dtb"
+readonly DTS_FILE="${FUCHSIA_DIR}/qemu-virt.dts"
+
+declare DUMP_DEVICE_TREE="false"
+declare QEMU_SERIAL_FLAGS="-serial tcp:localhost:54320 -serial tcp:localhost:54321"
+declare QEMU_EXTRA_ARGS=""
+#QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -d guest_errors" # Show error messages when accessing registers
+
+usage() {
+  printf '%s: [-t]\n' "$0"
+  printf '  -t            dump QEMU device tree (dtb, dts) to %s\n' ${FUCHSIA_DIR}
+}
+
+while getopts "t" opt; do
+  case "${opt}" in
+    t)
+      DUMP_DEVICE_TREE="true"
+      QEMU_SERIAL_FLAGS=""
+      QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -machine dumpdtb=${DTB_FILE}"
+      ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
 launch-terminal() {
   if [[ ! -z "${gnome_terminal}" ]];then
     nc -z  127.0.0.1 ${1} || ${gnome_terminal} -t "${2}" -x ${SOC_TERM_PATH}/soc_term ${1} &
@@ -46,22 +70,28 @@ wait-for-ports() {
   while ! nc -z 127.0.0.1 ${1} || ! nc -z 127.0.0.1 ${2}; do sleep 1; done
 }
 
+launch_qemu() {
+  cd ${ATF_BUILDROOT}/images/
+
+  ${qemu_dir}/qemu-system-aarch64 \
+    -nographic ${QEMU_SERIAL_FLAGS} \
+    -machine virt,secure=on -cpu cortex-a57 \
+    -m 1057 -bios ${ATF_BUILDROOT}/images/bl1.bin \
+    -s -S -semihosting-config enable,target=native -d unimp \
+    -initrd ${ROOTFS_BUILDROOT}/filesystem.cpio.gz \
+    -kernel ${LINUX_BUILDROOT}/arch/arm64/boot/Image -no-acpi \
+    -append 'console=ttyAMA0,38400 keep_bootcon root=/dev/vda2' ${QEMU_EXTRA_ARGS}
+}
+
+if [[ "${DUMP_DEVICE_TREE}" = "true" ]]; then
+  launch_qemu
+  dtc -I dtb -O dts ${DTB_FILE} > ${DTS_FILE}
+  exit 0
+fi
+
 run-help
 launch-terminal 54320 "Normal World"
 launch-terminal 54321 "Secure World"
 wait-for-ports 54320 54321
+launch_qemu
 
-declare QEMU_EXTRA_ARGS=""
-#QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -d guest_errors" # Show error messages when accessing registers
-
-# Launch QEMU
-cd ${ATF_BUILDROOT}/images/
-
-${qemu_dir}/qemu-system-aarch64 \
-  -nographic \
-  -serial tcp:localhost:54320 -serial tcp:localhost:54321 \
-  -machine virt,secure=on -cpu cortex-a57 -m 1057 -bios ${ATF_BUILDROOT}/images/bl1.bin \
-  -s -S -semihosting-config enable,target=native -d unimp \
-  -initrd ${ROOTFS_BUILDROOT}/filesystem.cpio.gz \
-  -kernel ${LINUX_BUILDROOT}/arch/arm64/boot/Image -no-acpi \
-  -append 'console=ttyAMA0,38400 keep_bootcon root=/dev/vda2' ${QEMU_EXTRA_ARGS}
