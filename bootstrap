@@ -31,7 +31,7 @@ if [[ "${tee}" == "gzos" ]]; then
   manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/garnet"
   manifest_branch="gzos"
 elif [[ "${tee}" == "trusty" ]]; then
-  manifest_name="trusty"
+  manifest_name="manifest"
   manifest_file="trusty"
   manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/manifest"
   manifest_branch="gzos"
