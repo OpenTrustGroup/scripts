@@ -11,10 +11,16 @@ set -e
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read
 
-if [[ ${TEE} = "gzos" ]]; then
+if [[ -z "${TEE}" ]]; then
   fx-command-run build-zircon
   fx-command-run build
-elif [[ ${TEE} = "trusty" ]]; then
+  exit 0
+fi
+
+if [[ "${TEE}" = "gzos" ]]; then
+  fx-command-run build-zircon
+  fx-command-run build
+elif [[ "${TEE}" = "trusty" ]]; then
   fx-command-run build-trusty
 fi
 

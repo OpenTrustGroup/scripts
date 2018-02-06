@@ -206,6 +206,7 @@ USE_CCACHE="${ccache}"
 TEE="gzos"
 END
 
+  gen_args="${gen_args} --args kernel_cmdline_file=\"//out/build-zircon/kernel_cmdline.txt\""
   gen_args="${gen_args} --args zircon_user_project=\"${ZIRCON_USER_PROJECT}\""
   "${FUCHSIA_DIR}/build/gn/gen.py" ${gen_args} "$@"
 }

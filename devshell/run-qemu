@@ -75,7 +75,7 @@ launch_qemu() {
 
   ${qemu_dir}/qemu-system-aarch64 \
     -nographic ${QEMU_SERIAL_FLAGS} \
-    -machine virt,secure=on -cpu cortex-a57 \
+    -machine virt,secure=on -cpu cortex-a53 \
     -m 1057 -bios ${ATF_BUILDROOT}/images/bl1.bin \
     -s -S -semihosting-config enable,target=native -d unimp \
     -initrd ${ROOTFS_BUILDROOT}/filesystem.cpio.gz \

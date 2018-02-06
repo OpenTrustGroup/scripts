@@ -8,9 +8,21 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read
 
+declare KERNEL_CMDLINE_FILE="${FUCHSIA_OUT_DIR}/build-zircon/kernel_cmdline.txt"
+
 if [[ -z "${ZIRCON_USER_PROJECT}" ]]; then
   ZIRCON_USER_PROJECT="user"
 fi
 
 echo "Building zircon..."
 "${FUCHSIA_DIR}/scripts/build-zircon.sh" -p "${ZIRCON_PROJECT}" -u "${ZIRCON_USER_PROJECT}" "$@"
+
+echo "Generating ${KERNEL_CMDLINE_FILE}..."
+cat >"${KERNEL_CMDLINE_FILE}" <<END
+TERM=screen-256color
+kernel.entropy-mixin=$(head -c 32 /dev/urandom | shasum -a 256 | awk '{ print $1 }')
+kernel.halt-on-panic=true
+kernel.shell=false
+kernel.oom.redline-mb=1
+ktrace.bufsize=1
+END
