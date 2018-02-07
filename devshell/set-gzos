@@ -42,29 +42,34 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read-if-present
 
-readonly project_prefix="gzos"
-readonly support_arch="arm64"
-
 declare -A alias_projects=(
-  ["arm64"]="${project_prefix}-qemu-arm64"
-  ["aarch64"]="${project_prefix}-qemu-arm64"
+  ["gztee"]="gztee-arm64"
 )
 
-function convert_to_gzos_project {
-  local platform=${1}
-  local arch=${2}
-  echo "${project_prefix}-${platform}-${arch}"
+function is_user_project {
+  if [[ $1 = *"user-"* ]]; then true; else false; fi
 }
 
-function get_project_arch {
-  local str=(${1//-/ })
-  local last_index=$(( ${#str[@]} - 1 ))
-  echo ${str[$last_index]}
+function is_x86_project {
+  if [[ $1 = *"x86"* ]]; then true; else false; fi
+}
+
+function get_project_prefix {
+  if [[ $1 = *"-"* ]]; then
+    local str=(${1//-/ })
+    echo ${str[0]}
+  else
+    echo ""
+  fi
 }
 
 declare project_list=""
-for arch in ${support_arch}; do
-  project_list="${project_list} $(ls ${FUCHSIA_DIR}/zircon/kernel/project/$(convert_to_gzos_project '*' ${arch}).mk | xargs -I{} basename -s .mk {})"
+
+tmp_list="$(ls ${FUCHSIA_DIR}/zircon/kernel/project/*.mk | xargs -I{} basename -s .mk {})"
+for p in ${tmp_list}; do
+  if ! $(is_user_project ${p}); then
+    project_list="${project_list} ${p}"
+  fi
 done
 
 function list_projects {
@@ -97,6 +102,14 @@ function search_projects {
   echo ""
 }
 
+function search_user_projects {
+  local prefix="$(get_project_prefix $1)"
+  if [[ -z "${prefix}" ]]; then
+    echo "user"
+  else
+    echo "${prefix}-user"
+  fi
+}
 
 function main {
   if [[ $# -lt 1 ]]; then
@@ -112,9 +125,15 @@ function main {
     return 1
   fi
 
-  local arch="$(get_project_arch ${zircon_project})"
-  if [[ "${arch}" = "arm64" ]]; then
-    arch=aarch64
+  local zircon_user_project="$(search_user_projects ${zircon_project})"
+  local arch="aarch64"
+
+  if [[ "${zircon_user_project}" != "user" ]]; then
+    gen_args="${gen_args} --args kernel_cmdline_file=\"//out/build-zircon/kernel_cmdline.txt\""
+  fi
+
+  if $(is_x86_project ${zircon_project}); then
+    arch=x86-64
   fi
 
   local gen_args="${gen_args} --target_cpu ${arch} --platforms ${zircon_project}"
@@ -202,13 +221,12 @@ FUCHSIA_BUILD_DIR="${build_dir}"
 FUCHSIA_VARIANT="${variant}"
 FUCHSIA_ARCH="${arch}"
 ZIRCON_PROJECT="${zircon_project}"
-ZIRCON_USER_PROJECT="gzos-user"
+ZIRCON_USER_PROJECT="${zircon_user_project}"
 USE_CCACHE="${ccache}"
 TEE="gzos"
 END
 
-  gen_args="${gen_args} --args kernel_cmdline_file=\"//out/build-zircon/kernel_cmdline.txt\""
-  gen_args="${gen_args} --args zircon_user_project=\"${ZIRCON_USER_PROJECT}\""
+  gen_args="${gen_args} --args zircon_user_project=\"${zircon_user_project}\""
   "${FUCHSIA_DIR}/build/gn/gen.py" ${gen_args} "$@"
 }
 
