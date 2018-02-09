@@ -149,6 +149,7 @@ function main {
 #        ;;
 #      --bootfs)
 #        extra_packages="${extra_packages},build/packages/bootfs"
+#        gen_args="${gen_args} --args bootfs_packages=true
 #        ;;
       --variant)
         if [[ $# -lt 2 ]]; then
@@ -186,7 +187,7 @@ function main {
   if [[ -n "${packages}" ]]; then
     gen_args="${gen_args} --packages ${packages}${extra_packages}"
   else
-    gen_args="${gen_args} --packages garnet/packages/gzos${extra_packages} --ignore-skia"
+    gen_args="${gen_args} --packages garnet/packages/gzos${extra_packages}"
   fi
 
   # gen.py defaults to determining the build directory from the variant and

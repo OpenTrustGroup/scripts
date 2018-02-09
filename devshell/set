@@ -55,6 +55,9 @@
 ##                         to make builds faster by caching build artifacts.
 ##                         Defaults to detecting whether the CCACHE_DIR environment
 ##                         variable is set to a directory.
+##   --ide                 Pass --ide=VALUE to gn when generating to create project
+##                         files usable with that IDE. Useful values include "vs"
+##                          for Visual Studio or "xcode" for Xcode.
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read-if-present
@@ -123,6 +126,7 @@ function main {
         ;;
       --bootfs)
         extra_packages="${extra_packages},build/packages/bootfs"
+        gen_args="${gen_args} --args bootfs_packages=true"
         ;;
       --build-dir)
         if [[ $# -lt 2 ]]; then
@@ -182,6 +186,14 @@ function main {
       --no-ccache)
         ccache=0
         ;;
+      --ide)
+        if [[ $# -lt 2 ]]; then
+          fx-command-help
+          return 1
+        fi
+        gen_args="${gen_args} --ide=$2"
+        shift
+        ;;
       *)
         fx-command-help
         return 1
@@ -212,11 +224,11 @@ function main {
     # conflicting version requirements of importing 2+ layers at the same time.
 
     if grep -q "manifest/garnet" "${jiri_manifest}"; then
-      gen_args="${gen_args} --packages garnet/packages/default${extra_packages} --ignore-skia"
+      gen_args="${gen_args} --packages garnet/packages/default${extra_packages}"
     fi
 
     if grep -q "manifest/peridot" "${jiri_manifest}"; then
-      gen_args="${gen_args} --packages peridot/packages/default${extra_packages} --ignore-skia"
+      gen_args="${gen_args} --packages peridot/packages/default${extra_packages}"
     fi
 
     if grep -q "manifest/topaz" "${jiri_manifest}"; then
