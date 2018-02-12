@@ -34,21 +34,31 @@ declare QEMU_EXTRA_ARGS=""
 usage() {
   printf '%s: [-t]\n' "$0"
   printf '  -t            dump QEMU device tree (dtb, dts) to %s\n' ${FUCHSIA_DIR}
+  printf '  -x            output QEMU serial logs to TMUX instead of gnome-terminal/xterm\n'
 }
 
-while getopts "t" opt; do
+while getopts "tx" opt; do
   case "${opt}" in
     t)
       DUMP_DEVICE_TREE="true"
       QEMU_SERIAL_FLAGS=""
       QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -machine dumpdtb=${DTB_FILE}"
       ;;
+    x)
+      if [[ ! -z "${TMUX}" ]]; then
+        readonly tmux="$(command -v tmux 2>/dev/null)"
+      else
+        echo "Warning: could not find tmux or tmux is not running, ignore."
+      fi
+      ;;
     *) usage 1>&2 ; exit 1 ;;
   esac
 done
 
 launch-terminal() {
-  if [[ ! -z "${gnome_terminal}" ]];then
+  if [[ ! -z "${tmux}" ]]; then
+    nc -z  127.0.0.1 ${1} || ${tmux} new-window -a -n "${2}" ${SOC_TERM_PATH}/soc_term ${1}
+  elif [[ ! -z "${gnome_terminal}" ]];then
     nc -z  127.0.0.1 ${1} || ${gnome_terminal} -t "${2}" -x ${SOC_TERM_PATH}/soc_term ${1} &
   elif [[ ! -z "${xterm}" ]];then
     nc -z  127.0.0.1 ${1} || ${xterm} -title "${2}" -e ${BASH} -c "${SOC_TERM_PATH}/soc_term ${1}" &
