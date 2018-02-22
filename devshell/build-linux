@@ -11,6 +11,7 @@ fx-config-read
 readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
 readonly LINUX_PATH="${FUCHSIA_DIR}/linux"
 readonly LINUX_ARCH="arm64"
+readonly LINUX_PREBUILT_DIR="${FUCHSIA_DIR}/scripts/prebuilt/linux"
 readonly SCRIPT_DIR="${FUCHSIA_DIR}/scripts"
 readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
 
@@ -65,3 +66,29 @@ ARCH=${LINUX_ARCH} \
 scripts/kconfig/merge_config.sh -O ${LINUX_BUILDROOT} ${LINUX_PATH}/arch/arm64/configs/defconfig ${SCRIPT_DIR}/kconfigs/${PLATFORM}.conf
 
 make -j ${JOBS} V=${VERBOSE} ${LINUX_FLAGS}
+
+echo ""
+echo "Updating linux prebuilt image... "
+cp ${LINUX_BUILDROOT}/.config ${LINUX_PREBUILT_DIR}/config
+cp ${LINUX_BUILDROOT}/vmlinux ${LINUX_PREBUILT_DIR}/
+cp ${LINUX_BUILDROOT}/System.map ${LINUX_PREBUILT_DIR}/
+cp ${LINUX_BUILDROOT}/arch/arm64/boot/Image ${LINUX_PREBUILT_DIR}/
+cp ${LINUX_BUILDROOT}/usr/gen_init_cpio ${LINUX_PREBUILT_DIR}/
+
+set +e # ignore the following commands error status
+last_commit="$(git log -1 --pretty=oneline)"
+old_last_commit="$(cat ${LINUX_PREBUILT_DIR}/last_commit)"
+config_diff="$(diff ${LINUX_BUILDROOT}/.config ${LINUX_PREBUILT_DIR}/config)"
+set -e
+
+LIGHT_RED='\033[1;31m'
+NC='\033[0m' # No Color
+NOTICE="${LIGHT_RED}NOTICE:${NC}"
+
+if [[ "${last_commit}" != "${old_last_commit}" ]] || [[ ! -z "${config_diff}" ]]; then
+  echo ""
+  echo ${last_commit} > ${LINUX_PREBUILT_DIR}/last_commit
+  echo -e "${NOTICE} Linux source code or config was changed. Remember to upload prebuilt files to gerrit for review."
+  echo -e "${NOTICE} (file path: ${LINUX_PREBUILT_DIR})"
+  echo ""
+fi

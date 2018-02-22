@@ -18,6 +18,7 @@ fi
 
 readonly ATF_BUILDROOT="${FUCHSIA_OUT_DIR}/build-atf"
 readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
+readonly LINUX_PREBUILT_DIR="${FUCHSIA_DIR}/scripts/prebuilt/linux"
 readonly ROOTFS_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux-rootfs"
 readonly SOC_TERM_PATH="${FUCHSIA_DIR}/third_party/soc_term"
 readonly gnome_terminal="$(command -v gnome-terminal 2>/dev/null)"
@@ -89,7 +90,7 @@ launch_qemu() {
     -m 1057 -bios ${ATF_BUILDROOT}/images/bl1.bin \
     -s -S -semihosting-config enable,target=native -d unimp \
     -initrd ${ROOTFS_BUILDROOT}/filesystem.cpio.gz \
-    -kernel ${LINUX_BUILDROOT}/arch/arm64/boot/Image -no-acpi \
+    -kernel ${LINUX_PREBUILT_DIR}/Image -no-acpi \
     -append 'console=ttyAMA0,38400 keep_bootcon root=/dev/vda2' ${QEMU_EXTRA_ARGS}
 }
 

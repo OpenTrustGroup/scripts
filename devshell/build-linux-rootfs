@@ -9,14 +9,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read
 
 readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
-readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
+readonly LINUX_PREBUILT_DIR="${FUCHSIA_DIR}/scripts/prebuilt/linux"
 readonly TIPC_TEST_BUILDROOT="${FUCHSIA_OUT_DIR}/build-tipc-test"
 readonly GEN_ROOTFS_PATH="${FUCHSIA_DIR}/gen_rootfs"
 readonly BUSYBOX_COMMON_TARGET="fvp"
 
 set -eo pipefail; [[ "${TRACE}" ]] && set -x
 
-export PATH=${PATH}:${LINUX_BUILDROOT}/usr
+export PATH=${PATH}:${LINUX_PREBUILT_DIR}
 export BUSYBOX_PATH="${FUCHSIA_DIR}/third_party/busybox"
 export ROOTFS_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux-rootfs"
 export VERBOSE="${VERBOSE}"
@@ -83,4 +83,4 @@ cd ${ROOTFS_BUILDROOT}
 cat filelist-final.txt > filelist.tmp
 cat ${EXTRA_ROOTFS_FILELIST} >> filelist.tmp
 
-${LINUX_BUILDROOT}/usr/gen_init_cpio filelist.tmp | gzip > filesystem.cpio.gz
+${LINUX_PREBUILT_DIR}/gen_init_cpio filelist.tmp | gzip > filesystem.cpio.gz
