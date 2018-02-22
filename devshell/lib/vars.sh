@@ -20,7 +20,7 @@ HOST_ARCH="$(uname -m)"
 HOST_OS="$(uname | tr '[:upper:]' '[:lower:]')"
 HOST_TRIPLE="${HOST_ARCH}-${HOST_OS}"
 
-export THIRD_PARTY_QEMU_BIN="${FUCHSIA_OUT_DIR}/qemu-${HOST_TRIPLE}/bin"
+export THIRD_PARTY_QEMU="${FUCHSIA_DIR}/scripts/prebuilt/qemu-${HOST_TRIPLE}"
 
 if [[ "${FUCHSIA_DEVSHELL_VERBOSITY}" -eq 1 ]]; then
   set -x

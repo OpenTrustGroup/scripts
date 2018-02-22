@@ -10,8 +10,8 @@ source "${FUCHSIA_DIR}/buildtools/vars.sh"
 
 set -e; [[ "${TRACE}" ]] && set -x
 
-if [[ -d "${THIRD_PARTY_QEMU_BIN}" ]]; then
-  qemu_dir="${THIRD_PARTY_QEMU_BIN}"
+if [[ -d "${THIRD_PARTY_QEMU}" ]]; then
+  qemu_dir="${THIRD_PARTY_QEMU}/bin"
 else
   qemu_dir="${BUILDTOOLS_QEMU_DIR}/bin"
 fi

@@ -24,7 +24,6 @@ elif [[ "${TEE}" = "trusty" ]]; then
   fx-command-run build-trusty
 fi
 
-fx-command-run build-qemu
 fx-command-run build-soc-term
 fx-command-run build-linux
 fx-command-run build-linux-rootfs
