@@ -54,6 +54,10 @@ function is_x86_project {
   if [[ $1 = *"x86"* ]]; then true; else false; fi
 }
 
+function is_third_party_user_project {
+  if [[ $1 = *"-user" ]]; then true; else false; fi
+}
+
 function get_project_prefix {
   if [[ $1 = *"-"* ]]; then
     local str=(${1//-/ })
@@ -132,14 +136,6 @@ function main {
     arch=x86-64
   fi
 
-  # official zircon projects' kernel command line arguments are from
-  # qemu '--append' parameter or other methods. Other third party
-  # projects can put kernel command line arguments in bootdata by
-  # providing 'kernel_cmdline_file' args to gen.py
-  if [[ "${zircon_user_project}" != "user" ]]; then
-    gen_args="${gen_args} --args kernel_cmdline_file=\"//out/build-zircon/kernel_cmdline.txt\""
-  fi
-
   local gen_args="${gen_args} --target_cpu ${arch} --platforms ${zircon_project}"
   shift
 
@@ -166,14 +162,6 @@ function main {
         fi
         shift
         ;;
-# TODO: what the 2 options used for?
-#      --netboot)
-#        extra_packages="${extra_packages},build/packages/netboot"
-#        ;;
-#      --bootfs)
-#        extra_packages="${extra_packages},build/packages/bootfs"
-#        gen_args="${gen_args} --args bootfs_packages=true
-#        ;;
       --variant)
         if [[ $# -lt 2 ]]; then
           fx-command-help
@@ -206,6 +194,19 @@ function main {
     esac
     shift
   done
+
+  if $(is_third_party_user_project ${zircon_user_project}); then
+    # Official zircon projects' kernel command line arguments are from
+    # qemu '--append' parameter or other methods. Other third party
+    # projects can put kernel command line arguments in bootdata by
+    # providing 'kernel_cmdline_file' args to gen.py
+    gen_args="${gen_args} --args kernel_cmdline_file=\"//out/build-zircon/kernel_cmdline.txt\""
+
+    # Official zircon projects' system partition is built by fuchisa's package manager.
+    # For third party projects, we just use bootfs for system partition
+    extra_packages="${extra_packages},build/packages/bootfs"
+    gen_args="${gen_args} --args bootfs_packages=true"
+  fi
 
   if [[ -n "${packages}" ]]; then
     gen_args="${gen_args} --packages ${packages}${extra_packages}"
