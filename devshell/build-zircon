@@ -23,6 +23,9 @@ TERM=screen-256color
 kernel.entropy-mixin=$(head -c 32 /dev/urandom | shasum -a 256 | awk '{ print $1 }')
 kernel.halt-on-panic=true
 kernel.shell=false
+kernel.oom.enable=false
 kernel.oom.redline-mb=1
 ktrace.bufsize=1
+virtcon.disable=true
+netsvc.disable=true
 END
