@@ -69,7 +69,6 @@ make -j ${JOBS} V=${VERBOSE} ${LINUX_FLAGS}
 
 echo ""
 echo "Updating linux prebuilt image... "
-cp ${LINUX_BUILDROOT}/.config ${LINUX_PREBUILT_DIR}/config
 cp ${LINUX_BUILDROOT}/vmlinux ${LINUX_PREBUILT_DIR}/
 cp ${LINUX_BUILDROOT}/System.map ${LINUX_PREBUILT_DIR}/
 cp ${LINUX_BUILDROOT}/arch/arm64/boot/Image ${LINUX_PREBUILT_DIR}/
@@ -87,6 +86,7 @@ NOTICE="${LIGHT_RED}NOTICE:${NC}"
 
 if [[ "${last_commit}" != "${old_last_commit}" ]] || [[ ! -z "${config_diff}" ]]; then
   echo ""
+  cp ${LINUX_BUILDROOT}/.config ${LINUX_PREBUILT_DIR}/config
   echo ${last_commit} > ${LINUX_PREBUILT_DIR}/last_commit
   echo -e "${NOTICE} Linux source code or config was changed. Remember to upload prebuilt files to gerrit for review."
   echo -e "${NOTICE} (file path: ${LINUX_PREBUILT_DIR})"
