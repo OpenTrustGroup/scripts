@@ -1,1 +1,1 @@
-40e143e038945fd938cd939c52ac6733fbb9b965 trusty: fix compile error for kernel-4.12
+6937e1dbe3eaeee17b488fb433411373b05798f8 trusty: temporarily disable unsupported features for gztee libsm bringup
