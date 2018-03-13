@@ -103,7 +103,7 @@ class ExpectProcess:
             p.close(force=True)
             result = True
         except Exception as e:
-            f.write(str(e))
+            f.write(str(e).encode())
 
         f.close()
         return result
