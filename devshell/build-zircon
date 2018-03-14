@@ -10,12 +10,12 @@ fx-config-read
 
 declare KERNEL_CMDLINE_FILE="${FUCHSIA_OUT_DIR}/build-zircon/kernel_cmdline.txt"
 
-if [[ -z "${ZIRCON_USER_PROJECT}" ]]; then
-  ZIRCON_USER_PROJECT="user"
-fi
-
 echo "Building zircon..."
-"${FUCHSIA_DIR}/scripts/build-zircon.sh" -t "${FUCHSIA_ARCH}" "$@"
+if [[ -z "${TEE}" ]]; then
+  "${FUCHSIA_DIR}/scripts/build-zircon.sh" -t "${FUCHSIA_ARCH}" "$@"
+else
+  "${FUCHSIA_DIR}/scripts/build-zircon.sh" -p "${ZIRCON_PROJECT}" "$@"
+fi
 
 echo "Generating ${KERNEL_CMDLINE_FILE}..."
 cat >"${KERNEL_CMDLINE_FILE}" <<END

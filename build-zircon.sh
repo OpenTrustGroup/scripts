@@ -22,6 +22,7 @@ usage() {
   echo "  -A: Build with ASan"
   echo "  -H: Build host tools with ASan"
   echo "  -t <target>: Architecture (GN style) to build, instead of all"
+  echo "  -p <project>: Build with alternative third-party project"
   echo "  -o <outdir>: Directory in which to put the build-zircon directory."
   echo ""
   echo "Note: Passing extra arguments to make is not supported."
@@ -41,6 +42,7 @@ while getopts "AcHht:p:u:o:vV" opt; do
     H) HOST_ASAN="true" ;;
     h) usage ; exit 0 ;;
     o) OUTDIR="${OPTARG}" ;;
+    p) ARCHLIST=("${OPTARG}") ;;
     t) ARCHLIST=("${OPTARG}") ;;
     v) VERBOSE="1" ;;
     V) VERBOSE="2" ;;
