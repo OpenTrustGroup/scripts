@@ -46,10 +46,9 @@ function fx-config-read-if-present {
 
   export FUCHSIA_VARIANT="${FUCHSIA_VARIANT}"
   export FUCHSIA_ARCH="${FUCHSIA_ARCH}"
-  export ZIRCON_PROJECT="${ZIRCON_PROJECT}"
 
   export ZIRCON_BUILDROOT="${ZIRCON_BUILDROOT:-${FUCHSIA_OUT_DIR}/build-zircon}"
-  export ZIRCON_BUILD_DIR="${ZIRCON_BUILD_DIR:-${ZIRCON_BUILDROOT}/build-${ZIRCON_PROJECT}}"
+  export ZIRCON_BUILD_DIR="${ZIRCON_BUILD_DIR:-${ZIRCON_BUILDROOT}/build-${FUCHSIA_ARCH}}"
   return 0
 }
 
@@ -58,6 +57,25 @@ function fx-config-read {
     echo >& 2 "error: Cannot read config from ${FUCHSIA_CONFIG}. Did you run \"fx set\"?"
     exit 1
   fi
+}
+
+# if $1 is "-d" or "--device" return
+#   - the netaddr if $2 looks like foo-bar-baz-flarg
+#     OR
+#   - $2 if it doesn't
+# else return ""
+function get-device-addr {
+  device=""
+  if [[ "$1" == "-d" || "$1" == "--device" ]]; then
+    shift
+    if [[ "$1" == *"-"* ]]; then
+      device="$(fx-command-run netaddr $1 --fuchsia)"
+    else
+      device="$1"
+    fi
+    shift
+  fi
+  echo $device
 }
 
 function fx-command-run {
