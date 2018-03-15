@@ -15,7 +15,7 @@ if [[ -z "${ZIRCON_USER_PROJECT}" ]]; then
 fi
 
 echo "Building zircon..."
-"${FUCHSIA_DIR}/scripts/build-zircon.sh" -p "${ZIRCON_PROJECT}" -u "${ZIRCON_USER_PROJECT}" "$@"
+"${FUCHSIA_DIR}/scripts/build-zircon.sh" -t "${FUCHSIA_ARCH}" "$@"
 
 echo "Generating ${KERNEL_CMDLINE_FILE}..."
 cat >"${KERNEL_CMDLINE_FILE}" <<END

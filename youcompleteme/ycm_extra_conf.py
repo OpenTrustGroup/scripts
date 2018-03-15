@@ -9,6 +9,7 @@ import os
 import re
 import stat
 import subprocess
+import ycm_core
 
 # NOTE: paths.py is a direct copy from //build/gn/paths.py
 # If there is an issue with the paths not being valid, just pull a new copy.
@@ -17,6 +18,13 @@ sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 import paths as fuchsia_paths
 
 fuchsia_root = os.path.realpath(fuchsia_paths.FUCHSIA_ROOT)
+zircon_database = None
+zircon_dir = os.path.join(fuchsia_root, 'zircon')
+# This doc explains how to generate compile_commands.json for Zircon:
+# https://fuchsia.googlesource.com/zircon/+/HEAD/docs/editors.md
+if os.path.exists(os.path.join(zircon_dir, 'compile_commands.json')):
+  zircon_database = ycm_core.CompilationDatabase(zircon_dir)
+
 os.chdir(fuchsia_root)
 fuchsia_build = subprocess.check_output(
     [os.path.join(fuchsia_paths.FUCHSIA_ROOT, 'scripts/fx'), 'get-build-dir']).strip()
@@ -27,11 +35,11 @@ ninja_path = os.path.join(fuchsia_root, 'buildtools', 'ninja')
 # Get the name of the zircon project from GN args.
 # Reading the args.gn is significantly faster than running `gn args` so we do
 # that.
-zircon_project = None
+target_cpu = None
 args = open(os.path.join(fuchsia_build, 'args.gn')).read()
-match = re.search(r'zircon_project\s*=\s*"([^"]+)"', args)
+match = re.search(r'target_cpu\s*=\s*"([^"]+)"', args)
 if match:
-    zircon_project = match.groups()[0]
+  target_cpu = match.groups()[0]
 
 common_flags = [
     '-std=c++14',
@@ -43,9 +51,9 @@ common_flags = [
 ]
 
 # Add the sysroot include if we found the zircon project
-if zircon_project:
+if target_cpu:
     common_flags += ['-I' + os.path.join(
-        fuchsia_root, 'out/build-zircon', 'build-' + zircon_project, 'sysroot/include')]
+        fuchsia_root, 'out/build-zircon', 'build-' + target_cpu, 'sysroot/include')]
 
 default_flags = [
     '-I' + fuchsia_root,
@@ -141,6 +149,16 @@ def FlagsForFile(filename):
       'flags': (List of Strings) Command line flags.
       'do_cache': (Boolean) True if the result should be cached.
   """
+  if zircon_database and ('zircon/' in filename):
+    zircon_compilation_info = zircon_database.GetCompilationInfoForFile(
+      filename)
+    if zircon_compilation_info.compiler_flags_:
+      return {
+        'flags': zircon_compilation_info.compiler_flags_,
+        'include_paths_relative_to_dir':
+            zircon_compilation_info.compiler_working_dir_,
+        'do_cache': True
+      }
   fuchsia_flags = GetClangCommandFromNinjaForFilename(filename)
   final_flags = common_flags + fuchsia_flags
 
