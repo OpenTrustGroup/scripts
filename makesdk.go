@@ -41,6 +41,9 @@ const (
 	customType
 )
 
+const x64BuildDir = "out/release-x64"
+const armBuildDir = "out/release-arm64/"
+
 type component struct {
 	flag      *bool  // Flag controlling whether this component should be included
 	srcPrefix string // Source path prefix relative to the fuchsia root
@@ -87,16 +90,16 @@ func init() {
 	}
 
 	zxBuildDir := "out/build-zircon/"
-	x86ZxBuildDir := zxBuildDir + "build-user-x86-64/"
-	armZxBuildDir := zxBuildDir + "build-user-arm64/"
-	x86BuildDir := "out/release-x86-64/"
-	armBuildDir := "out/release-aarch64/"
+	x64ZxBuildDir := zxBuildDir + "build-x64/"
+	armZxBuildDir := zxBuildDir + "build-arm64/"
+	x64BuildBootfsDir := "out/release-x64-bootfs/"
+	armBuildBootfsDir := "out/release-arm64-bootfs/"
 	qemuDir := fmt.Sprintf("buildtools/%s-%s/qemu/", hostOs, hostCpu)
 
 	dirs := []dir{
 		{
 			sysroot,
-			x86BuildDir + "sdks/zircon_sysroot/sysroot/",
+			x64BuildDir + "sdks/zircon_sysroot/sysroot/",
 			"sysroot/x86_64-fuchsia/",
 		},
 		{
@@ -116,8 +119,13 @@ func init() {
 		},
 		{
 			tools,
-			x86BuildDir + "host_x64/far",
+			x64BuildDir + "host_x64/far",
 			"tools/far",
+		},
+		{
+			tools,
+			x64BuildDir + "host_x64/pm",
+			"tools/pm",
 		},
 		{
 			toolchain,
@@ -155,22 +163,60 @@ func init() {
 	files := []file{
 		{
 			kernelImg,
-			"out/build-zircon/build-x86/zircon.bin",
-			"target/x86_64/zircon.bin",
-		},
-		{
-			bootdata,
-			x86BuildDir + "user.bootfs",
-			"target/x86_64/bootdata.bin",
-		},
-		{
-			kernelImg,
 			"out/build-zircon/build-arm64/zircon.bin",
 			"target/aarch64/zircon.bin",
 		},
 		{
+			kernelImg,
+			armBuildDir + "bootdata-blob-qemu.bin",
+			"target/aarch64/bootdata-blob.bin",
+		},
+		{
+			kernelImg,
+			armBuildDir + "images/fvm.blk.qcow2",
+			"target/aarch64/fvm.blk.qcow2",
+		},
+
+		{
+			kernelImg,
+			"out/build-zircon/build-x64/zircon.bin",
+			"target/x86_64/zircon.bin",
+		},
+		{
+			kernelImg,
+			x64BuildDir + "bootdata-blob-pc.bin",
+			"target/x86_64/bootdata-blob.bin",
+		},
+		{
+			kernelImg,
+			x64BuildDir + "images/local-pc.esp.blk",
+			"target/x86_64/local.esp.blk",
+		},
+		{
+			kernelImg,
+			x64BuildDir + "images/zircon-pc.vboot",
+			"target/x86_64/zircon.vboot",
+		},
+		{
+			kernelImg,
+			x64BuildDir + "images/fvm.blk.qcow2",
+			"target/x86_64/fvm.blk.qcow2",
+		},
+		{
+			kernelImg,
+			x64BuildDir + "images/fvm.sparse.blk",
+			"target/x86_64/fvm.sparse.blk",
+		},
+
+		// TODO(marshallk): Remove this when bootfs is deprecated.
+		{
 			bootdata,
-			armBuildDir + "user.bootfs",
+			x64BuildBootfsDir + "user.bootfs",
+			"target/x86_64/bootdata.bin",
+		},
+		{
+			bootdata,
+			armBuildBootfsDir + "user.bootfs",
 			"target/aarch64/bootdata.bin",
 		},
 	}
@@ -178,14 +224,14 @@ func init() {
 	components = []component{
 		{
 			kernelDebugObjs,
-			x86ZxBuildDir,
+			x64ZxBuildDir,
 			"sysroot/x86_64-fuchsia/debug-info",
 			customType,
 			copyKernelDebugObjs,
 		},
 		{
 			kernelDebugObjs,
-			x86BuildDir,
+			x64BuildDir,
 			"sysroot/x86_64-fuchsia/debug-info",
 			customType,
 			copyIdsTxt,
@@ -210,8 +256,8 @@ func init() {
 		files = append(files, file{c.flag, c.src, "sysroot/aarch64-fuchsia/include/" + c.dst})
 	}
 	for _, c := range clientLibs {
-		files = append(files, file{c.flag, x86BuildDir + "x64-shared/" + c.name, "sysroot/x86_64-fuchsia/lib/" + c.name})
-		files = append(files, file{c.flag, x86BuildDir + "x64-shared/lib.unstripped/" + c.name, "sysroot/x86_64-fuchsia/debug-info/" + c.name})
+		files = append(files, file{c.flag, x64BuildDir + "x64-shared/" + c.name, "sysroot/x86_64-fuchsia/lib/" + c.name})
+		files = append(files, file{c.flag, x64BuildDir + "x64-shared/lib.unstripped/" + c.name, "sysroot/x86_64-fuchsia/debug-info/" + c.name})
 		files = append(files, file{c.flag, armBuildDir + "arm64-shared/" + c.name, "sysroot/aarch64-fuchsia/lib/" + c.name})
 		files = append(files, file{c.flag, armBuildDir + "arm64-shared/lib.unstripped/" + c.name, "sysroot/aarch64-fuchsia/debug-info/" + c.name})
 	}
@@ -220,6 +266,22 @@ func init() {
 	}
 	for _, f := range files {
 		components = append(components, component{f.flag, f.src, f.dst, fileType, nil})
+	}
+}
+
+func createLayout(manifest, fuchsiaRoot, outDir string) {
+	manifestPath := filepath.Join(fuchsiaRoot, x64BuildDir, "sdk-manifests", manifest)
+	cmd := filepath.Join(fuchsiaRoot, "scripts", "sdk", "create_layout.py")
+	args := []string{"--manifest", manifestPath, "--output", outDir}
+	if *verbose || *dryRun {
+		fmt.Println("createLayout", cmd, args)
+	}
+	if *dryRun {
+		return
+	}
+	out, err := exec.Command(cmd, args...).Output()
+	if err != nil {
+		log.Fatal("create_layout.py failed with output", string(out), "error", err)
 	}
 }
 
@@ -342,6 +404,8 @@ only module.
 	} else if _, err := os.Stat(fuchsiaRoot); os.IsNotExist(err) {
 		mkdir(filepath.Dir(*outDir))
 	}
+
+	createLayout("zircon_legacy", fuchsiaRoot, *outDir)
 
 	for _, c := range components {
 		if *c.flag {

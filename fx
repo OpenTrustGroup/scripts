@@ -13,7 +13,7 @@ function commands {
   local newline=$'\n'
   local build_dir=$(get_build_dir)
   if [[ -n "${build_dir}" ]]; then
-    cmds="${cmds}${newline}$(ls "${build_dir}/tools" 2&>/dev/null)"
+    cmds="${cmds}${newline}$(ls "${build_dir}/tools" 2>/dev/null)"
   fi
 
   for tool in ${buildtools_whitelist}; do
@@ -109,7 +109,7 @@ To use these shell extensions, first source fx-env.sh into your shell:
 END
 }
 
-buildtools_whitelist="gn ninja go"
+buildtools_whitelist="gn ninja"
 
 fuchsia_dir="${FUCHSIA_DIR}"
 if [[ -z "${fuchsia_dir}" ]]; then
@@ -186,4 +186,16 @@ if [[ $? -ne 0 ]]; then
 fi
 
 shift # Removes the command name.
-exec "${command_path}" "$@"
+
+# Turn --switch=value into --switch value.
+declare -a args=()
+while [[ $# -ne 0 ]]; do
+  if [[ "$1" == --*=* ]]; then
+    args+=("${1%%=*}" "${1#*=}")
+  else
+    args+=("$1")
+  fi
+  shift
+done
+
+exec "${command_path}" "${args[@]}"
