@@ -74,6 +74,9 @@ cp ${LINUX_BUILDROOT}/System.map ${LINUX_PREBUILT_DIR}/
 cp ${LINUX_BUILDROOT}/arch/arm64/boot/Image ${LINUX_PREBUILT_DIR}/
 cp ${LINUX_BUILDROOT}/usr/gen_init_cpio ${LINUX_PREBUILT_DIR}/
 
+echo "Compressing vmlinux... "
+lzma -z2f ${LINUX_PREBUILT_DIR}/vmlinux
+
 set +e # ignore the following commands error status
 last_commit="$(git log -1 --pretty=oneline)"
 old_last_commit="$(cat ${LINUX_PREBUILT_DIR}/last_commit)"
