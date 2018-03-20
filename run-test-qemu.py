@@ -158,13 +158,15 @@ class TestCommand:
     def extract_log(self, logfile, prompt_str):
         log_buffer = []
         with open(logfile, 'r') as f:
-            ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+            ansi_escape = re.compile(r'(\x9B|\x1B(\[|\]))[0-?]*[ -/]*[@-~][hl]*')
             capture_log = False
             for line in f:
-                # remove line break
-                line = line.rstrip('\r\n')
                 # remove ansi escape sequence
                 line = ansi_escape.sub('', line)
+                # remove bell
+                line = line.strip('\a')
+                # remove line break
+                line = line.rstrip('\r\n')
 
                 if line == '':
                     continue
@@ -223,6 +225,53 @@ class ZirconUtParser(TestResultParser):
 
         return subtests
 
+class GoogleTestParser(TestResultParser):
+    @classmethod
+    def is_subtest_start(cls, line):
+        start_re = re.compile('(\d+) test[s]? from (\w+$)', re.IGNORECASE)
+        m = start_re.search(line)
+        if m:
+            return m.group(2), m.group(1)
+        return None, 0
+
+    @classmethod
+    def is_subtest_result(cls, line):
+        start_re = re.compile('\[\s+(OK|FAILED)\s+\] (\w+)\.(\w+)', re.IGNORECASE)
+        m = start_re.search(line)
+        if m:
+            return m.group(2), m.group(1)
+        return None, 0
+
+    @classmethod
+    def parse_log(cls, log_buffer):
+        subtests = dict()
+        has_error = False
+
+        for line in log_buffer:
+            (test_name, total) = cls.is_subtest_start(line)
+            if test_name is not None:
+                if test_name in subtests:
+                    print('Error: test (%s) already started' % test_name)
+                    has_error = True
+                    break
+                subtests[test_name] = SubTest(test_name)
+                subtests[test_name].total += int(total)
+                continue
+
+            (test_name, result) = cls.is_subtest_result(line)
+            if test_name is not None:
+                if test_name not in subtests:
+                    print('Error: test (%s) not started yet' % test_name)
+                    has_error = True
+                    break
+                if result == 'OK':
+                    subtests[test_name].passed += 1
+
+        if has_error:
+            return None
+
+        return subtests
+
 class TrustyUtParser(TestResultParser):
     @classmethod
     def is_test_result(cls, line):
@@ -255,6 +304,8 @@ class Gzos(OsTest):
     prompt_str = '$ '
     test_commands = [
         TestCommand('k ut all', parser=ZirconUtParser),
+        TestCommand('/system/test/machina_unittests', parser=GoogleTestParser),
+        TestCommand('/system/test/tipc_unittests', parser=GoogleTestParser),
     ]
 
 class Trusty(OsTest):
