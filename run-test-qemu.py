@@ -46,6 +46,17 @@ file_out.write(b'Test OS: %s\n' % args.os.encode())
 file_out.write(b'QEMU CMD: %s\n' % args.cmd.encode())
 file_out.close()
 
+class color:
+   PURPLE = '\033[95m'
+   CYAN = '\033[96m'
+   DARKCYAN = '\033[36m'
+   BLUE = '\033[94m'
+   GREEN = '\033[92m'
+   YELLOW = '\033[93m'
+   RED = '\033[91m'
+   BOLD = '\033[1m'
+   UNDERLINE = '\033[4m'
+   END = '\033[0m'
 
 class SubTest:
     def __init__(self, test_name):
@@ -60,10 +71,10 @@ class SubTest:
         if subtests is None:
             return False
 
-        print('%-20s %5s %5s %5s' % ("TEST", "TOTAL", "PASS", "FAIL"))
+        print(color.BOLD + '%-50s %5s %5s %5s' % ("TEST", "TOTAL", "PASS", "FAIL") + color.END)
         for key in subtests:
             obj = subtests[key]
-            print('%-20s %5d %5d %5d' %
+            print('%-50s %5d %5d %5d' %
                   (obj.name, obj.total, obj.passed, obj.total - obj.passed))
             total += obj.total
             passed += obj.passed
@@ -75,7 +86,6 @@ class SubTest:
         if total > 0 and failed == 0:
             return True
         return False
-
 
 class ExpectProcess:
     def __init__(self, process_cmd, working_dir, boot_complete_str, prompt_str, cmd_list):
@@ -97,7 +107,9 @@ class ExpectProcess:
 
             for cmd in self.cmd_list:
                 p.expect_exact(self.prompt_str)
-                p.sendline(cmd)
+                p.sendline(cmd.cmd_str)
+                p.expect_exact(self.prompt_str)
+                p.sendline()
             p.expect_exact(self.prompt_str)
             p.sendline()
             p.close(force=True)
@@ -116,10 +128,6 @@ class OsTest:
     os_name = ''
 
     @classmethod
-    def parse_log(cls, logfile):
-        pass
-
-    @classmethod
     def check(cls, logfile):
         p = ExpectProcess(args.cmd, args.working_dir, cls.boot_complete_str, cls.prompt_str, cls.test_commands)
         expect_success = p.run(logfile)
@@ -127,16 +135,49 @@ class OsTest:
             print('Failed to run test commands, please check expect log for detail information')
             return False
 
-        subtests = cls.parse_log(logfile)
-        return SubTest.check_result(subtests)
+        check_passed = True
+        for cmd in cls.test_commands:
+            print('\nTest result of "' + color.BOLD + cmd.cmd_str + color.END + '"')
+            log_buffer = cmd.extract_log(logfile, cls.prompt_str)
+            subtests = cmd.parser.parse_log(log_buffer)
+            if not SubTest.check_result(subtests):
+                check_passed = False
 
+        return check_passed
 
-class Gzos(OsTest):
-    os_name = 'gzos'
-    boot_complete_str = '$ '
-    prompt_str = '$ '
-    test_commands = ['k ut all']
+class TestResultParser:
+    @classmethod
+    def parse_log(cls, log_buffer):
+        pass
 
+class TestCommand:
+    def __init__(self, cmd_str, parser):
+        self.cmd_str = cmd_str
+        self.parser = parser
+
+    def extract_log(self, logfile, prompt_str):
+        log_buffer = []
+        with open(logfile, 'r') as f:
+            ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+            capture_log = False
+            for line in f:
+                # remove line break
+                line = line.rstrip('\r\n')
+                # remove ansi escape sequence
+                line = ansi_escape.sub('', line)
+
+                if line == '':
+                    continue
+                if line == prompt_str + self.cmd_str:
+                    capture_log = True
+                if capture_log and line == prompt_str:
+                    break
+                if capture_log:
+                    log_buffer.append(line)
+
+        return log_buffer
+
+class ZirconUtParser(TestResultParser):
     @classmethod
     def is_subtest_start(cls, line):
         start_re = re.compile('(\w+) : Running (\d+) test', re.IGNORECASE)
@@ -154,43 +195,35 @@ class Gzos(OsTest):
         return None, 0
 
     @classmethod
-    def parse_log(cls, logfile):
+    def parse_log(cls, log_buffer):
         subtests = dict()
         has_error = False
 
-        with open(logfile, 'r') as f:
-            for line in f:
-                (test_name, total) = cls.is_subtest_start(line)
-                if test_name is not None:
-                    if test_name in subtests:
-                        print('Error: test (%s) already started' % test_name)
-                        has_error = True
-                        break
-                    subtests[test_name] = SubTest(test_name)
-                    subtests[test_name].total += int(total)
-                    continue
-
-                (test_name, passed) = cls.is_subtest_end(line)
-                if test_name is not None:
-                    if test_name not in subtests:
-                        print('Error: test (%s) not started yet' % test_name)
-                        has_error = True
-                        break
-                    subtests[test_name].passed += int(passed)
-        f.close()
+        for line in log_buffer:
+            (test_name, total) = cls.is_subtest_start(line)
+            if test_name is not None:
+                if test_name in subtests:
+                    print('Error: test (%s) already started' % test_name)
+                    has_error = True
+                    break
+                subtests[test_name] = SubTest(test_name)
+                subtests[test_name].total += int(total)
+                continue
+ 
+            (test_name, passed) = cls.is_subtest_end(line)
+            if test_name is not None:
+                if test_name not in subtests:
+                    print('Error: test (%s) not started yet' % test_name)
+                    has_error = True
+                    break
+                subtests[test_name].passed += int(passed)
 
         if has_error:
             return None
 
         return subtests
 
-
-class Trusty(OsTest):
-    os_name = 'trusty'
-    boot_complete_str = 'Please press Enter to activate this console.'
-    prompt_str = 'root@FVP:/ '
-    test_commands = ['tipc-test -t ta2ta-ipc']
-
+class TrustyUtParser(TestResultParser):
     @classmethod
     def is_test_result(cls, line):
         result_re = re.compile('\d+: (\w+): (PASSED|FAILED)')
@@ -203,20 +236,34 @@ class Trusty(OsTest):
         return None, False
 
     @classmethod
-    def parse_log(cls, logfile):
+    def parse_log(cls, log_buffer):
         subtest = SubTest('tipc-test')
 
-        with open(logfile, 'r') as f:
-            for line in f:
-                (test_case, is_passed) = cls.is_test_result(line)
-                if test_case is not None:
-                    subtest.total += 1
-                    if is_passed:
-                        subtest.passed += 1
-                    continue
-        f.close()
+        for line in log_buffer:
+            (test_case, is_passed) = cls.is_test_result(line)
+            if test_case is not None:
+                subtest.total += 1
+                if is_passed:
+                    subtest.passed += 1
+                continue
+
         return {subtest.name : subtest}
 
+class Gzos(OsTest):
+    os_name = 'gzos'
+    boot_complete_str = '$ '
+    prompt_str = '$ '
+    test_commands = [
+        TestCommand('k ut all', parser=ZirconUtParser),
+    ]
+
+class Trusty(OsTest):
+    os_name = 'trusty'
+    boot_complete_str = 'Please press Enter to activate this console.'
+    prompt_str = 'root@FVP:/ '
+    test_commands = [
+        TestCommand('tipc-test -t ta2ta-ipc', parser=TrustyUtParser)
+    ]
 
 os_cls = None
 for cls in OsTest.__subclasses__():
