@@ -87,6 +87,7 @@ function main {
 TRUSTY_PROJECT="${trusty_project}"
 USE_CCACHE="${ccache}"
 TEE="trusty"
+FUCHSIA_ARCH="arm64"
 END
 }
 
