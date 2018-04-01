@@ -17,7 +17,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_CANONICAL_PACKAGES = [
     'default',
     'dev',
-    'dev_full'
+    'kitchen_sink',
 ]
 
 # Standard names for packages in a layer.
@@ -28,7 +28,11 @@ CANONICAL_PACKAGES = [
 # Directories which do not require aggregation.
 NO_AGGREGATION_DIRECTORIES = [
     'config',
+    'disabled',
+    # TODO: force experimental content to be built for each layer.
+    'experimental',
     'products',
+    'sdk',
 ]
 
 
@@ -105,22 +109,38 @@ def check_all(directory, dep_map, layer, is_root=True):
         return has_all_files
 
 
+def check_root(base, layer):
+    '''Verifies that all canonical packages are present at the root.'''
+    all_there = True
+    for file in ROOT_CANONICAL_PACKAGES + [layer]:
+        if not os.path.isfile(os.path.join(base, file)):
+            all_there = False
+            print('Missing root package: %s.' % file)
+    return all_there
+
+
 def main():
     parser = argparse.ArgumentParser(
             description=('Checks that packages in a given layer are properly '
                          'formatted and organized'))
-    parser.add_argument('--layer',
-                        help='Name of the layer to analyze',
-                        choices=['garnet', 'peridot', 'topaz'],
-                        required=True)
+    layer_group = parser.add_mutually_exclusive_group(required=True)
+    layer_group.add_argument('--layer',
+                             help='Name of the layer to analyze',
+                             choices=['garnet', 'peridot', 'topaz'])
+    layer_group.add_argument('--vendor-layer',
+                             help='Name of the vendor layer to analyze')
     parser.add_argument('--json-validator',
                         help='Path to the JSON validation tool',
                         required=True)
     args = parser.parse_args()
 
-    layer = args.layer
     os.chdir(FUCHSIA_ROOT)
-    base = os.path.join(layer, 'packages')
+    if args.layer:
+        layer = args.layer
+        base = os.path.join(layer, 'packages')
+    else:
+        layer = args.vendor_layer
+        base = os.path.join('vendor', layer, 'packages')
 
     # List all packages files.
     packages = []
@@ -139,6 +159,9 @@ def main():
         return False
 
     if not check_all(base, deps, layer):
+        return False
+
+    if not check_root(base, layer):
         return False
 
     return True
