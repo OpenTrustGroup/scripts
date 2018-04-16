@@ -37,6 +37,7 @@ parser.add_argument("-w", "--working-dir", default=ATF_IMAGE_PATH, help="Working
 parser.add_argument("-f", "--logfile", default=LOGFILE_PATH, help="pexpect log file")
 parser.add_argument("-c", "--cmd", help="Command string to start QEMU")
 parser.add_argument("-s", "--os", help="OS to be tested")
+parser.add_argument("-t", "--test", help="run specific test cases")
 args = parser.parse_args()
 
 file_out = open(args.logfile, "wb")
@@ -133,14 +134,23 @@ class OsTest:
 
     @classmethod
     def check(cls, logfile):
-        p = ExpectProcess(args.cmd, args.working_dir, cls.boot_complete_str, cls.prompt_str, cls.test_commands)
+        test_pattern = args.test
+        if args.test == 'all':
+            test_pattern = '.'
+
+        cmd_list = []
+        for c in cls.test_commands:
+            if re.search(test_pattern, c.cmd_str, re.IGNORECASE) is not None:
+                cmd_list.append(c)
+
+        p = ExpectProcess(args.cmd, args.working_dir, cls.boot_complete_str, cls.prompt_str, cmd_list)
         expect_success = p.run(logfile)
         if not expect_success:
             print('Failed to run test commands, please check expect log for detail information')
             return False
 
         check_passed = True
-        for cmd in cls.test_commands:
+        for cmd in cmd_list:
             print('\nTest result of "' + Color.BOLD + cmd.cmd_str + Color.END + '"')
             log_buffer = cmd.extract_log(logfile, cls.prompt_str)
             subtests = cmd.parser.parse_log(log_buffer)
