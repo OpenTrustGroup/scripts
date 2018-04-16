@@ -28,7 +28,7 @@ readonly DTB_FILE="${FUCHSIA_DIR}/qemu-virt.dtb"
 readonly DTS_FILE="${FUCHSIA_DIR}/qemu-virt.dts"
 
 declare DUMP_DEVICE_TREE=false
-declare RUN_CI_TEST=false
+declare RUN_CI_TEST=""
 declare QEMU_CMD=""
 declare QEMU_EXTRA_ARGS=""
 #QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -d guest_errors" # Show error messages when accessing registers
@@ -64,13 +64,13 @@ launch_qemu() {
 }
 
 usage() {
-  printf '%s: [-t|-x|-c]\n' "$0"
-  printf '  -t            dump QEMU device tree (dtb, dts) to %s\n' ${FUCHSIA_DIR}
-  printf '  -x            output QEMU serial logs to TMUX instead of gnome-terminal/xterm\n'
-  printf '  -c            run CI test\n'
+  printf '%s: [-t|-x|-c <test pattern>]\n' "$0"
+  printf '  -t                   dump QEMU device tree (dtb, dts) to %s\n' ${FUCHSIA_DIR}
+  printf '  -x                   output QEMU serial logs to TMUX instead of gnome-terminal/xterm\n'
+  printf '  -c <test pattern>    run CI test. 'all' for running all test cases\n'
 }
 
-while getopts "txc" opt; do
+while getopts "txc:" opt; do
   case "${opt}" in
     t)
       DUMP_DEVICE_TREE=true
@@ -83,7 +83,7 @@ while getopts "txc" opt; do
       fi
       ;;
     c)
-      RUN_CI_TEST=true
+      RUN_CI_TEST=$OPTARG
       ;;
     *) usage 1>&2 ; exit 1 ;;
   esac
@@ -105,7 +105,7 @@ if ${DUMP_DEVICE_TREE}; then
 
   launch_qemu
   dtc -I dtb -O dts ${DTB_FILE} > ${DTS_FILE}
-elif ${RUN_CI_TEST}; then
+elif [ ! -z "${RUN_CI_TEST}" ]; then
   if [[ "${TEE}" = "gzos" ]]; then
     QEMU_SERIAL_FLAGS="-serial file:${FUCHSIA_DIR}/serial0.log -serial stdio"
   else
@@ -114,7 +114,7 @@ elif ${RUN_CI_TEST}; then
   QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -monitor none"
   QEMU_CMD="${QEMU_COMMON_CMD} ${QEMU_SERIAL_FLAGS} ${QEMU_EXTRA_ARGS}"
 
-  "${FUCHSIA_DIR}/scripts/run-test-qemu.py" "-s${TEE}" "-c${QEMU_CMD}"
+  "${FUCHSIA_DIR}/scripts/run-test-qemu.py" "-s${TEE}" "-c${QEMU_CMD}" "-t${RUN_CI_TEST}"
 else
   QEMU_SERIAL_FLAGS="-serial tcp:localhost:54320 -serial tcp:localhost:54321"
   QEMU_GDB_DEBUG_FLAGS="-s -S"
