@@ -27,6 +27,7 @@ import argparse
 import os
 import pexpect
 import re
+from enum import Enum
 
 ATF_IMAGE_PATH = os.environ['FUCHSIA_OUT_DIR'] + "/build-atf/images"
 LOGFILE_PATH = os.environ['FUCHSIA_DIR'] + "/expect.log"
@@ -46,17 +47,19 @@ file_out.write(b'Test OS: %s\n' % args.os.encode())
 file_out.write(b'QEMU CMD: %s\n' % args.cmd.encode())
 file_out.close()
 
-class color:
-   PURPLE = '\033[95m'
-   CYAN = '\033[96m'
-   DARKCYAN = '\033[36m'
-   BLUE = '\033[94m'
-   GREEN = '\033[92m'
-   YELLOW = '\033[93m'
-   RED = '\033[91m'
-   BOLD = '\033[1m'
-   UNDERLINE = '\033[4m'
-   END = '\033[0m'
+
+class Color:
+    PURPLE = '\033[95m'
+    CYAN = '\033[96m'
+    DARKCYAN = '\033[36m'
+    BLUE = '\033[94m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    END = '\033[0m'
+
 
 class SubTest:
     def __init__(self, test_name):
@@ -71,8 +74,8 @@ class SubTest:
         if subtests is None:
             return False
 
-        print(color.BOLD + '%-50s %5s %5s %5s' % ("TEST", "TOTAL", "PASS", "FAIL") + color.END)
-        for key in subtests:
+        print(Color.BOLD + '%-50s %5s %5s %5s' % ("TEST", "TOTAL", "PASS", "FAIL") + Color.END)
+        for key in sorted(subtests):
             obj = subtests[key]
             print('%-50s %5d %5d %5d' %
                   (obj.name, obj.total, obj.passed, obj.total - obj.passed))
@@ -80,12 +83,13 @@ class SubTest:
             passed += obj.passed
 
         failed = total - passed
-        print('----------------------------')
-        print('Summary: %d/%d (Fail/Total)' % (failed, total))
+        print('%-50s %5s %5s %5s' % (' ', '-----', '-----', '-----'))
+        print('%-50s %5s %5s %5s' % (' ', total, passed, failed))
 
         if total > 0 and failed == 0:
             return True
         return False
+
 
 class ExpectProcess:
     def __init__(self, process_cmd, working_dir, boot_complete_str, prompt_str, cmd_list):
@@ -137,7 +141,7 @@ class OsTest:
 
         check_passed = True
         for cmd in cls.test_commands:
-            print('\nTest result of "' + color.BOLD + cmd.cmd_str + color.END + '"')
+            print('\nTest result of "' + Color.BOLD + cmd.cmd_str + Color.END + '"')
             log_buffer = cmd.extract_log(logfile, cls.prompt_str)
             subtests = cmd.parser.parse_log(log_buffer)
             if not SubTest.check_result(subtests):
@@ -145,10 +149,12 @@ class OsTest:
 
         return check_passed
 
+
 class TestResultParser:
     @classmethod
     def parse_log(cls, log_buffer):
         pass
+
 
 class TestCommand:
     def __init__(self, cmd_str, parser):
@@ -180,7 +186,8 @@ class TestCommand:
 
         return log_buffer
 
-class ZirconUtParser(TestResultParser):
+
+class ZirconKernelUtParser(TestResultParser):
     @classmethod
     def is_subtest_start(cls, line):
         start_re = re.compile('(\w+) : Running (\d+) test', re.IGNORECASE)
@@ -225,6 +232,90 @@ class ZirconUtParser(TestResultParser):
             return None
 
         return subtests
+
+
+class TestState(Enum):
+    NONE = 0
+    START = 1
+    END = 2
+
+
+class ZirconRunTestParser(TestResultParser):
+    @classmethod
+    def is_subtest_start(cls, line):
+        start_re = re.compile('CASE (\w+)\s+\[STARTED\]')
+        m = start_re.search(line)
+        if m:
+            return m.group(1)
+        return None
+
+    @classmethod
+    def is_subtest_end(cls, line):
+        start_re = re.compile('CASE (\w+)\s+\[(PASSED|FAILED)\]')
+        m = start_re.search(line)
+        if m:
+            is_test_fail = False
+            if m.group(2) == 'FAILED':
+                is_test_fail = True
+            return m.group(1), is_test_fail
+        return None, False
+
+    @classmethod
+    def is_subtest_result(cls, line):
+        end_re = re.compile('CASES:\s+(\d+)\s+SUCCESS:\s+(\d+)\s+FAILED:\s+(\d+)')
+        m = end_re.search(line)
+        if m:
+            return True, m.group(1), m.group(2), m.group(3)
+        return False, 0, 0, 0
+
+    @classmethod
+    def parse_log(cls, log_buffer):
+        subtests = dict()
+        has_error = False
+        test_state = TestState.NONE
+        is_test_fail = False
+        current_test_name = ''
+
+        for line in log_buffer:
+            if test_state == TestState.NONE:
+                test_name = cls.is_subtest_start(line)
+                if test_name is not None:
+                    if test_name in subtests:
+                        print('Error: test (%s) already started' % test_name)
+                        has_error = True
+                        break
+                    subtests[test_name] = SubTest(test_name)
+                    test_state = TestState.START
+                    is_test_fail = False
+                    current_test_name = test_name
+                    continue
+
+            if test_state == TestState.START:
+                (test_name, is_test_fail) = cls.is_subtest_end(line)
+                if test_name is not None:
+                    if test_name != current_test_name:
+                        print('Error: test (%s) not started yet' % test_name)
+                        has_error = True
+                        break
+                    test_state = TestState.END
+                    continue
+
+            if test_state == TestState.END:
+                (matched, total, passed, failed) = cls.is_subtest_result(line)
+                if matched:
+                    if is_test_fail and failed == 0:
+                        print('Error: test (%s) should have failed test cases' % current_test_name)
+                        has_error = True
+                        break
+                    subtests[current_test_name].total += int(total)
+                    subtests[current_test_name].passed += int(passed)
+                    test_state = TestState.NONE
+
+        if has_error or test_state != TestState.NONE:
+            return None
+
+        return subtests
+
 
 class GoogleTestParser(TestResultParser):
     @classmethod
@@ -273,6 +364,7 @@ class GoogleTestParser(TestResultParser):
 
         return subtests
 
+
 class TrustyUtParser(TestResultParser):
     @classmethod
     def is_test_result(cls, line):
@@ -297,16 +389,19 @@ class TrustyUtParser(TestResultParser):
                     subtest.passed += 1
                 continue
 
-        return {subtest.name : subtest}
+        return {subtest.name: subtest}
+
 
 class Gzos(OsTest):
     os_name = 'gzos'
     boot_complete_str = '$ '
     prompt_str = '$ '
     test_commands = [
-        TestCommand('k ut all', parser=ZirconUtParser),
+        TestCommand('k ut all', parser=ZirconKernelUtParser),
         TestCommand('/system/test/trusty_unittests', parser=GoogleTestParser),
+        TestCommand('runtests -t smc-test /system/test/core', parser=ZirconRunTestParser),
     ]
+
 
 class Trusty(OsTest):
     os_name = 'trusty'
@@ -315,6 +410,7 @@ class Trusty(OsTest):
     test_commands = [
         TestCommand('tipc-test -t ta2ta-ipc', parser=TrustyUtParser)
     ]
+
 
 os_cls = None
 for cls in OsTest.__subclasses__():
@@ -332,4 +428,3 @@ if os_cls.check(args.logfile):
 else:
     print("\nTest Failed")
     exit(-1)
-
