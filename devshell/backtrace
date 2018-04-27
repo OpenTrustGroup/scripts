@@ -1,0 +1,24 @@
+#!/bin/bash
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### show backtrace from a logfile
+
+## usage: fx backtrace [LOG_FILE]
+##
+## show backtrace from a logfile
+##
+## optional arguments:
+##   LOG_FILE               Log file path (default: expect.log)
+##
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+
+LOG_FILE=$1
+if [[ -z "${LOG_FILE}" ]]; then
+  LOG_FILE="${FUCHSIA_DIR}/expect.log"
+fi
+
+cat ${LOG_FILE} | "${FUCHSIA_DIR}/scripts/remove_tty_control_code.py" |
+"${FUCHSIA_DIR}/zircon/scripts/symbolize" -b "${FUCHSIA_DIR}/out/arm64" "${FUCHSIA_DIR}/out/build-zircon"
