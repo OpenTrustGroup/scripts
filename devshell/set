@@ -3,34 +3,41 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-### set build configuration
+### set up a build directory
 
-## usage: fx set TARGET
-##               [--release] [--packages P1,P2,...]
+## usage: fx set TARGET [[--build-dir] OUTDIR]
+##               [--packages P1,P2,...]
 ##               [--netboot] [--bootfs]
-##               [--build-dir DIR]
 ##               [--args ARG] [--help-args [ARG]] [--variant VARIANT]
 ##               [--goma|--no-goma] [--no-ensure-goma]
 ##               [--goma-dir DIR]
 ##               [--ccache|--no-ccache]
+##               [--release]
 ##
-## where TARGET is x64, arm64
+## where TARGET is x64 or arm64
 ##
-## Sets build options.
+## OUTDIR is the directory where the build output goes.
+## If it begins with `//` or `out/` then it's taken as relative to FUCHSIA_DIR.
+## Otherwise it should be an absolute path or a path relative to the current
+## working directory that winds up in `FUCHSIA_DIR/out`.
+## It defaults to `out/TARGET`.
+##
+## This is a wrapper around running `gn gen --check OUTDIR --args ...`.
+## If GN fails with an error, `fx set` does not change anything.
+## If GN succeeds, this also points subsequent `fx` commands at OUTDIR,
+## just as `fx use` does and ensures Goma is ready (if enabled).
 ##
 ## optional arguments:
-##   --release             Build the release variant (e.g., more compiler
-##                         optimizations, less debugging information).
+##   --build-dir OUTDIR    Using this option is deprecated.  It's the same
+##                         as just giving OUTDIR as a non-option argument.
 ##   --packages            Include the listed packages (separated by commas) in the
 ##                         system build. Defaults to the default set of packages
 ##                         for the current layer (e.g., "garnet/packages/default"
 ##                         for the Garnet layer). If the --packages argument is
 ##                         given multiple times, all the specified packages are
 ##                         included in the build.
-##   --variant             Pass --variant=VARIANT to gen.py, which itself is
-##                         a shorthand for setting the `select_variant` GN
-##                         build argument using a standard set of values.
-##                         Multiple --variant arguments can be used.
+##   --variant             Pass a `select_variant=[VARIANT*,...]` GN build argument
+##                         collecting all the --variant arguments in order.
 ##   --args                Additional argument to pass to gn. If the --args
 ##                         argument is given multiple times, all the specified
 ##                         arguments are passed to gn.
@@ -50,9 +57,6 @@
 ##                         If --help-args is used alone, all GN build arguments
 ##                         are displayed (lots of output).
 ##                         This option requires an existing build directory.
-##   --build-dir           The directory (relative to FUCHSIA_DIR) into which to
-##                         generate the build system. Defaults to
-##                         "out/<variant>-<arch>".
 ##   --goma|--no-goma      Whether to use the goma service during the build. Goma
 ##                         attempts to make builds faster using remote build
 ##                         servers. Defaults to detecting whether goma is installed
@@ -66,7 +70,8 @@
 ##                         variable is set to a directory.
 ##   --ide                 Pass --ide=VALUE to gn when generating to create project
 ##                         files usable with that IDE. Useful values include "vs"
-##                          for Visual Studio or "xcode" for Xcode.
+##                         for Visual Studio or "xcode" for Xcode.
+##   --release             an alias for "--args=is_debug=false"
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read-if-present
@@ -94,48 +99,43 @@ function main {
       return 1
       ;;
   esac
-
-  local gen_args="${gen_args} --target_cpu ${arch}"
   shift
 
-  local variant=debug
+  local gn_cmd='gen'
+  local -a gn_switches=(--check)
+  local gn_args="target_cpu=\"${arch}\""
   local packages=
   local extra_packages=
   local build_dir=
+  local variant=
   local use_goma
   local goma_dir
   local ensure_goma=1
   local ccache
   while [[ $# -ne 0 ]]; do
-    case $1 in
-      --release)
-        gen_args="${gen_args} --release"
-        variant=release
-        ;;
+    case "$1" in
       --packages)
         if [[ $# -lt 2 ]]; then
           fx-command-help
           return 1
         fi
-        if [[ -z "${packages}" ]]; then
-          packages="$2"
-        else
-          packages="${packages},$2"
-        fi
+        packages+="${packages:+,}$2"
         shift
         ;;
       --netboot)
-        extra_packages="${extra_packages},build/packages/netboot"
+        extra_packages+=',build/packages/netboot'
         ;;
       --bootfs)
-        extra_packages="${extra_packages},build/packages/bootfs"
-        gen_args="${gen_args} --args bootfs_packages=true"
+        extra_packages+=',build/packages/bootfs'
+        gn_args+=' bootfs_packages=true'
         ;;
+      # TODO(mcgrathr): Remove this after a deprecation period.
       --build-dir)
         if [[ $# -lt 2 ]]; then
           fx-command-help
           return 1
         fi
+        echo >&2 "NOTE: The --build-dir switch is deprecated; give $2 alone."
         build_dir="$2"
         shift
         ;;
@@ -160,12 +160,15 @@ function main {
         fi
         shift
         ;;
+      --release)
+        gn_args+=" is_debug=false"
+        ;;
       --variant)
         if [[ $# -lt 2 ]]; then
           fx-command-help
           return 1
         fi
-        gen_args="${gen_args} --variant $2"
+        variant+="\"$2\","
         shift
         ;;
       --args)
@@ -173,14 +176,16 @@ function main {
           fx-command-help
           return 1
         fi
-        gen_args="${gen_args} --args $2"
+        gn_args+=" $2"
         shift
         ;;
       --help-args)
-        gen_args="${gen_args} --help-args"
+        gn_cmd=args
         if [[ $# -ge 2 ]] && [[ "$2" != '--*' ]]; then
-          gen_args="${gen_args} $2"
+          gn_switches+=("--list=$2")
           shift
+        else
+          gn_switches+=(--list)
         fi
         ;;
       --ccache)
@@ -194,64 +199,67 @@ function main {
           fx-command-help
           return 1
         fi
-        gen_args="${gen_args} --ide=$2"
+        gn_switches+=("--ide=$2")
         shift
         ;;
-      *)
+      --*)
         fx-command-help
         return 1
+        ;;
+      *)
+        # A non-option argument is the build_dir, but there can be only one.
+        if [[ -n "$build_dir" ]]; then
+          fx-command-help
+          return 1
+        fi
+        build_dir="$1"
+        ;;
     esac
     shift
   done
 
-  if [[ -n "${packages}" ]]; then
-    gen_args="${gen_args} --packages ${packages}${extra_packages}"
-  else
-    local -r jiri_manifest="${FUCHSIA_DIR}/.jiri_manifest"
-
-    # TODO(pylaligand): remove this check once the Fuchsia population has moved
-    # away from that specific manifest.
-    if grep -q "\"fuchsia\"" "${jiri_manifest}"; then
-      echo -e "error: You are using the obsolete 'fuchsia' manifest."
-      echo -e "error: Please switch to the Topaz manifest instead: fx set-layer topaz"
-      return 1
-    fi
-
-    # TODO(abarth): We might want to make this logic more sophisticated once we
-    # have a mechanism for switching between layers or for selecting which
-    # layers to build from source.
-
-    # If multiple cases below trigger, gen.py will error out because gen.py
-    # doesn't support multiple --packages arguments. However, we shouldn't get
-    # into this situation because jiri would have already errored out due to the
-    # conflicting version requirements of importing 2+ layers at the same time.
-
-    if grep -q "manifest/garnet" "${jiri_manifest}"; then
-      gen_args="${gen_args} --packages garnet/packages/default${extra_packages}"
-    fi
-
-    if grep -q "manifest/peridot" "${jiri_manifest}"; then
-      gen_args="${gen_args} --packages peridot/packages/default${extra_packages}"
-    fi
-
-    if grep -q "manifest/topaz" "${jiri_manifest}"; then
-      gen_args="${gen_args} --packages topaz/packages/default${extra_packages}"
-    fi
-
-    if [[ `cat ${jiri_manifest}` =~ vendor/([a-zA-Z0-9_-]+) ]]; then
-      local -r name="${BASH_REMATCH[1]}"
-      gen_args="${gen_args} --packages vendor/${name}/packages/default${extra_packages}"
-    fi
+  if [[ -z "${packages}" ]]; then
+    # This is the default logic GN would use, but we have to append
+    # $extra_packages, so repeat it here.
+    local layers
+    layers="$(${FUCHSIA_DIR}/build/gn/guess_layer.py)" || return 1
+    readonly layers
+    local layer
+    for layer in $layers; do
+      packages+="${packages:+,}$layer/packages/default"
+    done
   fi
 
-  if [[ -n "${build_dir}" ]]; then
-    gen_args="${gen_args} --build-dir ${build_dir}"
-  else
-    # gen.py defaults to determining the build directory from the variant and
-    # the arch. We replicate that logic here rather than passing a redundant
-    # argument to gen.py.
-    build_dir="out/${variant}-${arch}"
-  fi
+  # Remove any trailing slash from build directory name.
+  build_dir="${build_dir%/}"
+
+  local config_build_dir
+  case "$build_dir" in
+    '')
+      # Default is "//out/$target_cpu".  Store it as relative.
+      config_build_dir="out/${arch}"
+      build_dir="${FUCHSIA_DIR}/${config_build_dir}"
+      ;;
+    //*|out/*)
+      # GN-style "source-relative" path or relative out/something.
+      config_build_dir="${build_dir#//}"
+      build_dir="${FUCHSIA_DIR}/${config_build_dir}"
+      ;;
+    *)
+      # Absolute or relative path.  Canonicalize it to source-relative.
+      local abs_build_dir
+      abs_build_dir="$(cd "${build_dir%/*}"; pwd)/${build_dir##*/}" || {
+        echo >&2 "ERROR: Missing parent directories for ${build_dir}"
+        return 1
+      }
+      if [[ "$abs_build_dir" == "${FUCHSIA_DIR}"/out/* ]]; then
+        config_build_dir="${abs_build_dir#${FUCHSIA_DIR}/}"
+      else
+        echo >&2 "WARNING: ${abs_build_dir} is not a subdirectory of ${FUCHSIA_DIR}/out"
+        config_build_dir="$abs_build_dir"
+      fi
+      ;;
+  esac
 
   # If a goma directory wasn't specified explicitly then default to "~/goma".
   if [[ -z "${goma_dir}" ]]; then
@@ -267,22 +275,35 @@ function main {
     fi
   fi
 
-  # Add --goma or --ccache as appropriate.
+  # Add goma or ccache settings as appropriate.
   if [[ "${use_goma}" -eq 1 ]]; then
-    gen_args="${gen_args} --goma ${goma_dir}"
+    gn_args+=" use_goma=true goma_dir=\"${goma_dir}\""
   elif [[ "${ccache}" -eq 1 ]]; then
-    gen_args="${gen_args} --ccache"
+    gn_args+=" use_ccache=true"
   fi
 
-  # Update print-vars if you add or remove anything from this list.
-  cat >"${FUCHSIA_CONFIG}" <<END
-# Generated by "fx set".
-FUCHSIA_BUILD_DIR="${build_dir}"
-FUCHSIA_VARIANT="${variant}"
-FUCHSIA_ARCH="${arch}"
-END
+  gn_args+=" fuchsia_packages=["
+  IFS=,
+  for package in ${packages}${extra_packages}; do
+    gn_args+="\"${package}\","
+  done
+  gn_args+="]"
 
-  "${FUCHSIA_DIR}/build/gn/gen.py" ${gen_args} "$@" || return $?
+  if [[ -n "${variant}" ]]; then
+    gn_args+=" select_variant=[${variant}]"
+  fi
+
+  # Using a subshell with -x prints out the gn command precisely with shell
+  # quoting so a cut&paste to the command line works.  Always show the real
+  # meaning of what this script does so everyone learns how GN works.
+  (
+    set -x
+    "${FUCHSIA_DIR}/buildtools/gn" ${gn_cmd} "${build_dir}" \
+                                   "${gn_switches[@]}" --args="${gn_args}" "$@"
+  # If GN failed, don't update .config.
+  ) || return
+
+  fx-config-write "${config_build_dir}"
 
   if [[ "${use_goma}" -eq 1 ]] && [[ "${ensure_goma}" -eq 1 ]]; then
     if ! [[ $("${goma_dir}/gomacc" port) =~ ^[0-9]+$ ]]; then

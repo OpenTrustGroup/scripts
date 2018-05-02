@@ -14,41 +14,44 @@ JOBS=`getconf _NPROCESSORS_ONLN` || {
 set -eo pipefail; [[ "${TRACE}" ]] && set -x
 
 usage() {
-  echo "$0 <options>"
+  echo "$0 <options> <extra-make-arguments>"
+  echo ""
   echo "Options:"
   echo "  -c: Clean before building"
   echo "  -v: Level 1 verbosity"
   echo "  -V: Level 2 verbosity"
   echo "  -A: Build with ASan"
   echo "  -H: Build host tools with ASan"
+  echo "  -j N: Passed along to make (number of parallel jobs)"
   echo "  -t <target>: Architecture (GN style) to build, instead of all"
-  echo "  -p <project>: Build with alternative third-party project"
   echo "  -o <outdir>: Directory in which to put the build-zircon directory."
   echo ""
-  echo "Note: Passing extra arguments to make is not supported."
+  echo "Additional arguments may be passed to make using standard FOO=bar syntax."
+  echo "E.g., build-zircon.sh USE_CLANG=true"
 }
 
-declare ASAN="${ASAN:-false}"
-declare CLEAN="${CLEAN:-false}"
-declare HOST_ASAN="${HOST_ASAN:-false}"
-declare OUTDIR="${OUTDIR:-${ROOT_DIR}/out}"
-declare VERBOSE="${VERBOSE:-0}"
+declare ASAN="false"
+declare CLEAN="false"
+declare HOST_ASAN="false"
+declare OUTDIR="${ROOT_DIR}/out"
+declare VERBOSE="0"
 declare -a ARCHLIST=(arm64 x64)
 
-while getopts "AcHht:p:u:o:vV" opt; do
+while getopts "AcHhj:t:p:o:vV" opt; do
   case "${opt}" in
     A) ASAN="true" ;;
     c) CLEAN="true" ;;
     H) HOST_ASAN="true" ;;
     h) usage ; exit 0 ;;
+    j) JOBS="${OPTARG}" ;;
     o) OUTDIR="${OPTARG}" ;;
-    p) ARCHLIST=("${OPTARG}") ;;
     t) ARCHLIST=("${OPTARG}") ;;
     v) VERBOSE="1" ;;
     V) VERBOSE="2" ;;
     *) usage 1>&2 ; exit 1 ;;
   esac
 done
+shift $(($OPTIND - 1))
 
 readonly ASAN CLEAN HOST_ASAN PROJECTS OUTDIR VERBOSE
 readonly ZIRCON_BUILDROOT="${OUTDIR}/build-zircon"
@@ -82,7 +85,7 @@ make_zircon_common() {
 
 # Build host tools.
 make_zircon_common \
-  BUILDDIR=${OUTDIR}/build-zircon HOST_USE_ASAN="${HOST_ASAN}" tools
+  BUILDDIR=${OUTDIR}/build-zircon HOST_USE_ASAN="${HOST_ASAN}" tools "$@"
 
 make_zircon_target() {
   make_zircon_common \
@@ -92,10 +95,10 @@ make_zircon_target() {
 for ARCH in "${ARCHLIST[@]}"; do
     # Build full bootloader, kernel, userland, and sysroot.
     make_zircon_target PROJECT="${ARCH}" \
-        BUILDDIR_SUFFIX= USE_ASAN="${ASAN_ZIRCON}"
+        BUILDDIR_SUFFIX= USE_ASAN="${ASAN_ZIRCON}" "$@"
 
     # Build alternate shared libraries (ASan).
     make_zircon_target PROJECT="${ARCH}" \
         BUILDDIR_SUFFIX=-ulib USE_ASAN="${ASAN_ULIB}" \
-        ENABLE_ULIB_ONLY=true ENABLE_BUILD_SYSROOT=false
+        ENABLE_ULIB_ONLY=true ENABLE_BUILD_SYSROOT=false "$@"
 done

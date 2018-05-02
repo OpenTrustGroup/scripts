@@ -35,6 +35,11 @@ NO_AGGREGATION_DIRECTORIES = [
     'sdk',
 ]
 
+# Non-package files allowed in package directories.
+NON_PACKAGE_FILES = [
+    'README.md',
+]
+
 
 def check_json(packages):
     '''Verifies that all files in the list are JSON files.'''
@@ -97,7 +102,7 @@ def check_all(directory, dep_map, layer, is_root=True):
         for file in filenames:
             if is_root and (file in ROOT_CANONICAL_PACKAGES or file == layer):
                 continue
-            if file in CANONICAL_PACKAGES:
+            if file in CANONICAL_PACKAGES or file in NON_PACKAGE_FILES:
                 continue
             package = os.path.join(dirpath, file)
             if not verify(package):
@@ -145,7 +150,8 @@ def main():
     # List all packages files.
     packages = []
     for dirpath, dirnames, filenames in os.walk(base):
-        packages.extend([os.path.join(dirpath, f) for f in filenames])
+        packages.extend([os.path.join(dirpath, f) for f in filenames
+                         if f not in NON_PACKAGE_FILES])
 
     if not check_json(packages):
         return False

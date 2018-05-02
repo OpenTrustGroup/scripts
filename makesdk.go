@@ -93,8 +93,6 @@ func init() {
 	zxBuildDir := "out/build-zircon"
 	x64ZxBuildDir := path.Join(zxBuildDir, "build-x64")
 	armZxBuildDir := path.Join(zxBuildDir, "build-arm64")
-	x64BuildBootfsDir := "out/release-x64-bootfs/"
-	armBuildBootfsDir := "out/release-arm64-bootfs/"
 	qemuDir := fmt.Sprintf("buildtools/%s-%s/qemu/", hostOs, hostCpu)
 
 	dirs := []dir{
@@ -164,7 +162,7 @@ func init() {
 	files := []file{
 		{
 			kernelImg,
-			"out/build-zircon/build-arm64/zircon.bin",
+			"out/build-zircon/build-arm64/qemu-zircon.bin",
 			"target/aarch64/zircon.bin",
 		},
 		{
@@ -208,17 +206,35 @@ func init() {
 			path.Join(x64BuildDir, "images/fvm.sparse.blk"),
 			"target/x86_64/fvm.sparse.blk",
 		},
-
-		// TODO(marshallk): Remove this when bootfs is deprecated.
 		{
-			bootdata,
-			path.Join(x64BuildBootfsDir, "user.bootfs"),
-			"target/x86_64/bootdata.bin",
+			sysroot,
+			path.Join(x64BuildDir, "stripped/libc++.so.2"),
+			"arch/x64/dist/libc++.so.2",
 		},
 		{
-			bootdata,
-			path.Join(armBuildBootfsDir, "user.bootfs"),
-			"target/aarch64/bootdata.bin",
+			sysroot,
+			path.Join(armBuildDir, "stripped/libc++.so.2"),
+			"arch/arm64/dist/libc++.so.2",
+		},
+		{
+			sysroot,
+			path.Join(x64BuildDir, "stripped/libc++abi.so.1"),
+			"arch/x64/dist/libc++abi.so.1",
+		},
+		{
+			sysroot,
+			path.Join(armBuildDir, "stripped/libc++abi.so.1"),
+			"arch/arm64/dist/libc++abi.so.1",
+		},
+		{
+			sysroot,
+			path.Join(x64BuildDir, "stripped/libunwind.so.1"),
+			"arch/x64/dist/libunwind.so.1",
+		},
+		{
+			sysroot,
+			path.Join(armBuildDir, "stripped/libunwind.so.1"),
+			"arch/arm64/dist/libunwind.so.1",
 		},
 	}
 
@@ -411,7 +427,7 @@ only module.
 		mkdir(filepath.Dir(*outDir))
 	}
 
-	createLayout("zircon_legacy", fuchsiaRoot, *outDir)
+	createLayout("garnet", fuchsiaRoot, *outDir)
 
 	for _, c := range components {
 		if *c.flag {

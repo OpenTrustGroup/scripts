@@ -10,13 +10,6 @@ fx-config-read
 
 declare KERNEL_CMDLINE_FILE="${FUCHSIA_OUT_DIR}/build-zircon/kernel_cmdline.txt"
 
-echo "Building zircon..."
-if [[ -z "${TEE}" ]]; then
-  "${FUCHSIA_DIR}/scripts/build-zircon.sh" -t "${FUCHSIA_ARCH}" "$@"
-else
-  "${FUCHSIA_DIR}/scripts/build-zircon.sh" -p "${ZIRCON_PROJECT}" "$@"
-fi
-
 echo "Generating ${KERNEL_CMDLINE_FILE}..."
 cat >"${KERNEL_CMDLINE_FILE}" <<END
 TERM=screen-256color
@@ -29,3 +22,15 @@ ktrace.bufsize=1
 virtcon.disable=true
 netsvc.disable=true
 END
+
+echo "Building zircon..."
+declare TARGET_LIST=${ZIRCON_PROJECT}
+if [[ -z "${TEE}" ]]; then
+  TARGET_LIST=${FUCHSIA_ARCH}
+fi
+
+"${FUCHSIA_DIR}/scripts/build-zircon.sh" \
+  -t "${TARGET_LIST}" \
+  -j "$(fx-choose-build-concurrency)" \
+  "$@"
+
