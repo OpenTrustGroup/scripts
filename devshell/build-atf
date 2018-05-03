@@ -22,8 +22,8 @@ declare BL32_EXTRA2_BIN=""
 declare SPD="none"
 
 if [[ "${TEE}" = "gzos" ]]; then
-  BL32_BIN="${ZIRCON_BUILD_DIR}/zircon.bin"
-  BL32_EXTRA1_BIN="${FUCHSIA_BUILD_DIR}/user.bootfs"
+  BL32_BIN="${ZIRCON_BUILD_DIR}/qemu-tz-zircon.bin"
+  BL32_EXTRA1_BIN="${FUCHSIA_BUILD_DIR}/bootdata-blob-qemu-tz.bin"
   BL32_EXTRA2_BIN=""
   SPD=trusty
 elif [[ "${TEE}" = "trusty" ]]; then
