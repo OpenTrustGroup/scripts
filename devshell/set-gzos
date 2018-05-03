@@ -6,9 +6,10 @@
 ### set gzos build configuration
 
 ## usage: fx set-gzos TARGET
-##               [--release] [--packages P1,P2,...]
+##               [--packages P1,P2,...]
 ##               [--args ARG] [--help-args [ARG]] [--variant VARIANT]
-##               [--ccache]
+##               [--ccache|--no-ccache]
+##               [--release]
 ##
 ## Sets gzos build options.
 ##
@@ -16,28 +17,38 @@
 ##   TARGET                Target platform or project
 ##
 ## optional arguments:
-##   --release             Build the release variant (e.g., more compiler
-##                         optimizations, less debugging information).
 ##   --packages            Include the listed packages (separated by commas) in the
 ##                         system build. Defaults to the default set of packages
 ##                         for the current layer (e.g., "garnet/packages/default"
-##                         for the Garnet layer). If the --package argument is
+##                         for the Garnet layer). If the --packages argument is
 ##                         given multiple times, all the specified packages are
 ##                         included in the build.
-##   --variant             Pass --variant=VARIANT to gen.py, which itself is
-##                         a shorthand for setting the `select_variant` GN
-##                         build argument using a standard set of values.
-##                         Multiple --variant arguments can be used.
+##   --variant             Pass a `select_variant=[VARIANT*,...]` GN build argument
+##                         collecting all the --variant arguments in order.
 ##   --args                Additional argument to pass to gn. If the --args
 ##                         argument is given multiple times, all the specified
 ##                         arguments are passed to gn.
+##                         N.B. Arguments must be expressed using GN's syntax.
+##                         In particular this means that for strings they must
+##                         be quoted with double-quotes, and the quoting must
+##                         survive, for example, the shell. Thus when passing
+##                         an argument that takes a string, pass it with
+##                         something like --args=foo='"bar"'. E.g.,
+##                         bash$ fx set x64 --args=foo='"bar"'
+##                         More complicated arguments, e.g., lists, require
+##                         their own special syntax. See GN documentation
+##                         for the syntax of each kind of argument.
 ##   --help-args           Display GN arguments documentation.  If --help-args
 ##                         is followed by a GN build argument identifier, just
 ##                         that argument's documentation is displayed.
 ##                         If --help-args is used alone, all GN build arguments
 ##                         are displayed (lots of output).
-##   --ccache              Whether to use ccache during the build. Ccache attempts
+##                         This option requires an existing build directory.
+##   --ccache|--no-ccache  Whether to use ccache during the build. Ccache attempts
 ##                         to make builds faster by caching build artifacts.
+##                         Defaults to detecting whether the CCACHE_DIR environment
+##                         variable is set to a directory.
+##   --release             an alias for "--args=is_debug=false"
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read-if-present
@@ -121,7 +132,10 @@ function main {
   local gen_args="${gen_args} --target_cpu ${arch}"
   shift
 
-  local variant=debug
+  local gn_cmd='gen'
+  local -a gn_switches=(--check)
+  local gn_args="target_cpu=\"${arch}\""
+  local variant=
   local packages=
   local extra_packages=
   local build_dir=
@@ -129,19 +143,14 @@ function main {
   while [[ $# -ne 0 ]]; do
     case $1 in
       --release)
-        gen_args="${gen_args} --release"
-        variant=release
+        gn_args+=" is_debug=false"
         ;;
       --packages)
         if [[ $# -lt 2 ]]; then
           fx-command-help
           return 1
         fi
-        if [[ -z "${packages}" ]]; then
-          packages="$2"
-        else
-          packages="${packages},$2"
-        fi
+        packages+="${packages:+,}$2"
         shift
         ;;
       --variant)
@@ -149,7 +158,7 @@ function main {
           fx-command-help
           return 1
         fi
-        gen_args="${gen_args} --variant $2"
+        variant+="\"$2\","
         shift
         ;;
       --args)
@@ -157,18 +166,23 @@ function main {
           fx-command-help
           return 1
         fi
-        gen_args="${gen_args} --args $2"
+        gn_args+=" $2"
         shift
         ;;
       --help-args)
-        gen_args="${gen_args} --help-args"
+        gn_cmd=args
         if [[ $# -ge 2 ]] && [[ "$2" != '--*' ]]; then
-          gen_args="${gen_args} $2"
+          gn_switches+=("--list=$2")
           shift
+        else
+          gn_switches+=(--list)
         fi
         ;;
       --ccache)
         ccache=1
+        ;;
+      --no-ccache)
+        ccache=0
         ;;
       *)
         fx-command-help
@@ -178,34 +192,79 @@ function main {
   done
 
   if $(is_third_party_project ${zircon_project}); then
-    gen_args="${gen_args} --args zircon_project=\"${zircon_project}\""
+    gn_args+=" zircon_project=\"${zircon_project}\""
 
     # Official zircon projects' kernel command line arguments are from
     # qemu '--append' parameter or other methods. Other third party
     # projects can put kernel command line arguments in bootdata by
     # providing 'kernel_cmdline_file' args to gen.py
-    gen_args="${gen_args} --args kernel_cmdline_file=\"//out/build-zircon/kernel_cmdline.txt\""
+    gn_args+=" kernel_cmdline_file=\"//out/build-zircon/kernel_cmdline.txt\""
 
     # Official zircon projects' system partition is built by fuchisa's package manager.
     # For third party projects, we just use bootfs for system partition
-    extra_packages="${extra_packages},build/packages/bootfs"
-    gen_args="${gen_args} --args bootfs_packages=true"
+    extra_packages+=",build/packages/bootfs"
+    gn_args+=" bootfs_packages=true"
 
     # Zedboot image requires some binaries(e.g. netsvc) that may not available
     # in third party project. Thus we disable building zedboot image.
-    gen_args="${gen_args} --args disable_zedboot=true"
+    gn_args+=" disable_zedboot=true"
   fi
 
-  if [[ -n "${packages}" ]]; then
-    gen_args="${gen_args} --packages ${packages}${extra_packages}"
-  else
-    gen_args="${gen_args} --packages garnet/packages/gzos${extra_packages}"
+  if [[ -z "${packages}" ]]; then
+    packages="garnet/packages/gzos"
   fi
 
-  # gen.py defaults to determining the build directory from the variant and
-  # the arch. We replicate that logic here rather than passing a redundant
-  # argument to gen.py.
-  build_dir="out/${variant}-${arch}"
+  gn_args+=" fuchsia_packages=["
+  IFS=,
+  for package in ${packages}${extra_packages}; do
+    gn_args+="\"${package}\","
+  done
+  gn_args+="]"
+
+  if [[ -n "${variant}" ]]; then
+    gn_args+=" select_variant=[${variant}]"
+  fi
+
+  # Remove any trailing slash from build directory name.
+  build_dir="${build_dir%/}"
+
+  local config_build_dir
+  case "$build_dir" in
+    '')
+      # Default is "//out/$target_cpu".  Store it as relative.
+      config_build_dir="out/${arch}"
+      build_dir="${FUCHSIA_DIR}/${config_build_dir}"
+      ;;
+    //*|out/*)
+      # GN-style "source-relative" path or relative out/something.
+      config_build_dir="${build_dir#//}"
+      build_dir="${FUCHSIA_DIR}/${config_build_dir}"
+      ;;
+    *)
+      # Absolute or relative path.  Canonicalize it to source-relative.
+      local abs_build_dir
+      abs_build_dir="$(cd "${build_dir%/*}"; pwd)/${build_dir##*/}" || {
+        echo >&2 "ERROR: Missing parent directories for ${build_dir}"
+        return 1
+      }
+      if [[ "$abs_build_dir" == "${FUCHSIA_DIR}"/out/* ]]; then
+        config_build_dir="${abs_build_dir#${FUCHSIA_DIR}/}"
+      else
+        echo >&2 "WARNING: ${abs_build_dir} is not a subdirectory of ${FUCHSIA_DIR}/out"
+        config_build_dir="$abs_build_dir"
+      fi
+      ;;
+  esac
+
+  # Using a subshell with -x prints out the gn command precisely with shell
+  # quoting so a cut&paste to the command line works.  Always show the real
+  # meaning of what this script does so everyone learns how GN works.
+  (
+    set -x
+    "${FUCHSIA_DIR}/buildtools/gn" ${gn_cmd} "${build_dir}" \
+                                   "${gn_switches[@]}" --args="${gn_args}" "$@"
+  # If GN failed, don't update .config.
+  ) || return
 
   # Update config file
   cat >"${FUCHSIA_CONFIG}" <<END
@@ -218,7 +277,6 @@ USE_CCACHE="${ccache}"
 TEE="gzos"
 END
 
-  "${FUCHSIA_DIR}/build/gn/gen.py" ${gen_args} "$@"
 }
 
 main "$@"
