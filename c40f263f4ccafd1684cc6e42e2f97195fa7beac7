@@ -1,0 +1,50 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "30d7bc3b_31478e28",
+        "filename": "devshell/build-zircon",
+        "patchSetId": 1
+      },
+      "lineNbr": 20,
+      "author": {
+        "id": 1012985
+      },
+      "writtenOn": "2018-05-03T06:41:44Z",
+      "side": 1,
+      "message": "why building zircon before generating kernel command line?",
+      "range": {
+        "startLine": 11,
+        "startChar": 0,
+        "endLine": 20,
+        "endChar": 6
+      },
+      "revId": "c40f263f4ccafd1684cc6e42e2f97195fa7beac7",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "cce66235_e8d7543b",
+        "filename": "devshell/set-gzos",
+        "patchSetId": 1
+      },
+      "lineNbr": 249,
+      "author": {
+        "id": 1012985
+      },
+      "writtenOn": "2018-05-03T06:41:44Z",
+      "side": 1,
+      "message": "redundant declaration",
+      "range": {
+        "startLine": 247,
+        "startChar": 0,
+        "endLine": 249,
+        "endChar": 4
+      },
+      "revId": "c40f263f4ccafd1684cc6e42e2f97195fa7beac7",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    }
+  ]
+}
