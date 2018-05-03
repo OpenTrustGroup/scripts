@@ -8,6 +8,17 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read
 
+echo "Building zircon..."
+declare TARGET_LIST=${ZIRCON_PROJECT}
+if [[ -z "${TEE}" ]]; then
+  TARGET_LIST=${FUCHSIA_ARCH}
+fi
+
+"${FUCHSIA_DIR}/scripts/build-zircon.sh" \
+  -t "${TARGET_LIST}" \
+  -j "$(fx-choose-build-concurrency)" \
+  "$@"
+
 declare KERNEL_CMDLINE_FILE="${FUCHSIA_OUT_DIR}/build-zircon/kernel_cmdline.txt"
 
 echo "Generating ${KERNEL_CMDLINE_FILE}..."
@@ -22,15 +33,3 @@ ktrace.bufsize=1
 virtcon.disable=true
 netsvc.disable=true
 END
-
-echo "Building zircon..."
-declare TARGET_LIST=${ZIRCON_PROJECT}
-if [[ -z "${TEE}" ]]; then
-  TARGET_LIST=${FUCHSIA_ARCH}
-fi
-
-"${FUCHSIA_DIR}/scripts/build-zircon.sh" \
-  -t "${TARGET_LIST}" \
-  -j "$(fx-choose-build-concurrency)" \
-  "$@"
-
