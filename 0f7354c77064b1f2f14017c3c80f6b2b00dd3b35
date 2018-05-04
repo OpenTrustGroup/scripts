@@ -1,0 +1,27 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "d12f1391_eff6e886",
+        "filename": "devshell/set-gzos",
+        "patchSetId": 4
+      },
+      "lineNbr": 132,
+      "author": {
+        "id": 1012985
+      },
+      "writtenOn": "2018-05-04T02:37:00Z",
+      "side": 1,
+      "message": "can be removed",
+      "range": {
+        "startLine": 132,
+        "startChar": 2,
+        "endLine": 132,
+        "endChar": 51
+      },
+      "revId": "0f7354c77064b1f2f14017c3c80f6b2b00dd3b35",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    }
+  ]
+}
