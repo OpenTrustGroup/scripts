@@ -7,18 +7,19 @@ set -e
 
 function usage {
   cat <<END
-usage: bootstrap [gzos|trusty]
+usage: bootstrap [gzos|trusty] [dev|stable]
 
 Bootstrap a TEE development environment. Default: gzos
 END
 }
 
-if [[ $# -gt 1 ]]; then
+if [[ $# -gt 2 ]]; then
   usage
   exit 1
 fi
 
 tee=${1:-gzos}
+version=${2:-stable}
 
 declare manifest_name=""
 declare manifest_file=""
@@ -26,10 +27,17 @@ declare manifest_url=""
 declare manifest_branch=""
 
 if [[ "${tee}" == "gzos" ]]; then
-  manifest_name="garnet"
-  manifest_file="manifest/garnet"
-  manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/garnet"
-  manifest_branch="gzos"
+  if [[ "${version}" == "dev" ]]; then
+    manifest_name="garnet"
+    manifest_file="manifest/garnet"
+    manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/garnet"
+    manifest_branch="gzos"
+  else
+    manifest_name="manifest"
+    manifest_file="gzos_stable"
+    manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/manifest"
+    manifest_branch="gzos"
+  fi
 elif [[ "${tee}" == "trusty" ]]; then
   manifest_name="manifest"
   manifest_file="trusty"
@@ -43,12 +51,12 @@ fi
 # The fetched script will
 # - create "fuchsia" directory if it does not exist,
 # - download "jiri" command to "fuchsia/.jiri_root/bin"
-curl -s "https://fuchsia.googlesource.com/jiri/+/master/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s "${tee}"
-cd "${tee}"
+curl -s "https://fuchsia.googlesource.com/jiri/+/master/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s "${tee}_${version}"
+cd "${tee}_${version}"
 
 .jiri_root/bin/jiri import -name="${manifest_name}" -remote-branch="${manifest_branch}" "${manifest_file}" "${manifest_url}"
 
-.jiri_root/bin/jiri update
+.jiri_root/bin/jiri update -hook-timeout=120
 
 mkdir -p ~/bin
 cp .jiri_root/bin/jiri ~/bin
