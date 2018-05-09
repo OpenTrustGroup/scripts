@@ -409,6 +409,7 @@ class Gzos(OsTest):
     test_commands = [
         TestCommand('k ut all', parser=ZirconKernelUtParser),
         TestCommand('/system/test/trusty_unittests', parser=GoogleTestParser),
+        TestCommand('/system/test/ree_agent_unittests', parser=GoogleTestParser),
         TestCommand('runtests -t smc-test /system/test/core', parser=ZirconRunTestParser),
     ]
 
