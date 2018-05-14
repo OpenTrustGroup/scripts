@@ -411,6 +411,7 @@ class Gzos(OsTest):
         TestCommand('/system/test/trusty_unittests', parser=GoogleTestParser),
         TestCommand('/system/test/ree_agent_unittests', parser=GoogleTestParser),
         TestCommand('runtests -t smc-test /system/test/core', parser=ZirconRunTestParser),
+        TestCommand('/system/test/smc_service_test', parser=GoogleTestParser),
     ]
 
 
