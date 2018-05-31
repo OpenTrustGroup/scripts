@@ -200,8 +200,8 @@ function main {
 
     # Official zircon projects' system partition is built by fuchisa's package manager.
     # For third party projects, we just use bootfs for system partition
-    extra_packages+=",build/packages/bootfs"
-    gn_args+=" bootfs_packages=true"
+    #extra_packages+=",build/packages/bootfs"
+    #gn_args+=" bootfs_packages=true"
 
     # Zedboot image requires some binaries(e.g. netsvc) that may not available
     # in third party project. Thus we disable building zedboot image.
