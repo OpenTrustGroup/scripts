@@ -58,7 +58,7 @@ def build_package(pm_bin, pkg_key, far_stg_dir, manifest, pkg_name):
     try:
         subprocess.check_call(build_cmd)
     except subprocess.CalledProcessError as e:
-        return None, "Could not create package metadata FAR: %s" % e
+        return None, None, "Could not create package metadata FAR: %s" % e
     except OSError as e:
         return None, None, "Could not start packging tool %s" % e
 
@@ -80,30 +80,34 @@ def assemble_manifest(manifests_dir, output_stream):
 
     No returns, but may raise an exception if writing to output_stream fails.
     """
-    inputs = ["final_package_manifest"]
+    inputs = ["final_package_manifest", "package_manifest"]
     for input in inputs:
         manifest = os.path.join(manifests_dir, input)
         if os.path.exists(manifest) and os.stat(manifest).st_size > 0:
             with open(manifest, "r") as src:
                 for line in src:
                     output_stream.write(line)
-            break
 
-def add_far_to_repo(amber_bin, name, far, key_dir, repo_dir, version=0):
+def add_far_to_repo(amber_bin, name, far, key_dir, repo_dir, ver_scheme, version=0):
     """Add a FAR to the update repository under the specified name
 
-    amber_bin: path to the amber binary
-    name     : name to publish the package as
-    far      : path to the FAR file to publish
-    key_dir  : directory containing set of keys for the update repository
-    repo_dir : directory to use as the update repository (should exist, but
-               doesn't need to be initialized as an update repo)
+    amber_bin : path to the amber binary
+    name      : name to publish the package as
+    far       : path to the FAR file to publish
+    key_dir   : directory containing set of keys for the update repository
+    repo_dir  : directory to use as the update repository (should exist, but
+                doesn't need to be initialized as an update repo)
+    ver_scheme: scheme to base repository versions on, defaults to "mono"
+                for "monotonic" but can be set to "time" to base versions
+                on the number of seconds since amber epoch.
 
     On success returns None, otherwise returns a string describing the error
     that occurred.
     """
     cmd = [amber_bin, "-r", repo_dir, "-p", "-f", far, "-n", "%s/%d" % (name, version), "-k", key_dir]
 
+    if ver_scheme == "time":
+      cmd += ["-vt"]
     try:
         subprocess.check_call(cmd)
     except subprocess.CalledProcessError as e:
@@ -139,7 +143,7 @@ def add_rsrcs_to_repo(amber_bin, manifest, key_dir, repo_dir):
     return None
 
 def publish(pm_bin, amber_bin, pkg_key, repo_key_dir, pkg_stg_dir, update_repo,
-            manifests_dir, pkgs, verbose):
+            manifests_dir, pkgs, ver_scheme, verbose):
     """Publish packages as a signed metadata FAR and a collection of content
     blobs named after their content IDs.
 
@@ -153,6 +157,9 @@ def publish(pm_bin, amber_bin, pkg_key, repo_key_dir, pkg_stg_dir, update_repo,
     manifests_dir: parent directory where manifests can be found for the
                    packages
     pkgs         : pkgs to publish
+    ver_scheme   : scheme to base repository versions on, defaults to "mono"
+                   for "monotonic" but can be set to "time" to base versions
+                   on the number of seconds since amber epoch.
     verbose      : print out status updates
     """
     # as an optimization, publish the content blobs all at once
@@ -202,7 +209,7 @@ def publish(pm_bin, amber_bin, pkg_key, repo_key_dir, pkg_stg_dir, update_repo,
             break
 
         result = add_far_to_repo(amber_bin, pkg, meta_far, repo_key_dir, update_repo,
-                                 version=pkg_version)
+                                 ver_scheme, version=pkg_version)
         if result is not None:
             print "Package not added to update repo: %s" % result
             break
@@ -231,6 +238,13 @@ def main():
                         help="""Packages to publish. This argument may be
                         repeated to publish multiple packages.""")
     parser.add_argument('--quiet', action='store_true', required=False, default=False)
+    parser.add_argument('--ver-scheme', action='store', required=False, default='mono',
+                        help="""scheme to base repository versions on, defaults to "mono"
+                        for "monotonic" but can be set to "time" to base versions on the number
+                        of seconds since amber epoch""")
+    parser.add_argument('--pkgs-dir', action='store', required=False,
+                        help="""Parent directory of all generated package
+                        metadata""")
     args = parser.parse_args()
 
     build_dir = args.build_dir
@@ -286,8 +300,16 @@ def main():
             for l in pfile:
                 pkg_list.append(l.strip())
 
+    if args.ver_scheme != "mono" and args.ver_scheme != "time":
+      print "'%s' is not a recognized version scheme, use 'time' or 'mono'"
+      return -1
+
+    pkgs_dir = args.pkgs_dir
+    if not pkgs_dir:
+      pkgs_dir = os.path.join(build_dir, "package")
+
     return publish(pm_bin, amber_bin, pkg_key, build_dir, pkg_stg_dir, repo_dir,
-        os.path.join(build_dir, "package"), pkg_list, not args.quiet)
+                   pkgs_dir, pkg_list, args.ver_scheme, not args.quiet)
 
 if __name__ == '__main__':
     sys.exit(main())

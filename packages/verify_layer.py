@@ -15,6 +15,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Standard names for root packages in a layer.
 ROOT_CANONICAL_PACKAGES = [
+    'buildbot',
     'default',
     'dev',
     'kitchen_sink',
@@ -32,7 +33,6 @@ NO_AGGREGATION_DIRECTORIES = [
     # TODO: force experimental content to be built for each layer.
     'experimental',
     'products',
-    'sdk',
 ]
 
 # Non-package files allowed in package directories.
