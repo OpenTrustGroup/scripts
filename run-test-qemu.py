@@ -140,7 +140,9 @@ class OsTest:
 
         cmd_list = []
         for c in cls.test_commands:
-            if re.search(test_pattern, c.cmd_str, re.IGNORECASE) is not None:
+            if c.parser is None:
+                cmd_list.append(c)
+            elif re.search(test_pattern, c.cmd_str, re.IGNORECASE) is not None:
                 cmd_list.append(c)
 
         p = ExpectProcess(args.cmd, args.working_dir, cls.boot_complete_str, cls.prompt_str, cmd_list)
@@ -151,6 +153,9 @@ class OsTest:
 
         check_passed = True
         for cmd in cmd_list:
+            if cmd.parser is None:
+                continue
+
             print('\nTest result of "' + Color.BOLD + cmd.cmd_str + Color.END + '"')
             log_buffer = cmd.extract_log(logfile, cls.prompt_str)
             subtests = cmd.parser.parse_log(log_buffer)
@@ -407,6 +412,8 @@ class Gzos(OsTest):
     boot_complete_str = '$ '
     prompt_str = '$ '
     test_commands = [
+        TestCommand('killall smc_service', parser=None),
+        TestCommand('killall ree_agent', parser=None),
         TestCommand('k ut all', parser=ZirconKernelUtParser),
         TestCommand('/system/test/trusty_unittests', parser=GoogleTestParser),
         TestCommand('/system/test/ree_agent_unittests', parser=GoogleTestParser),
