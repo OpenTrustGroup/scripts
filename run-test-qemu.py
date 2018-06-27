@@ -415,7 +415,7 @@ class Gzos(OsTest):
         TestCommand('killall smc_service', parser=None),
         TestCommand('killall ree_agent', parser=None),
         TestCommand('k ut all', parser=ZirconKernelUtParser),
-        TestCommand('/system/test/trusty_unittests', parser=GoogleTestParser),
+        TestCommand('/system/test/trusty_virtio_unittests', parser=GoogleTestParser),
         TestCommand('/system/test/ree_agent_unittests', parser=GoogleTestParser),
         TestCommand('runtests -t smc-test /system/test/core', parser=ZirconRunTestParser),
         TestCommand('/system/test/smc_service_test', parser=GoogleTestParser),
