@@ -19,7 +19,7 @@ fi
 "${FUCHSIA_DIR}/scripts/build-zircon.sh" \
   -t "${TARGET_LIST}" \
   -j "$(fx-choose-build-concurrency)" \
-  "$@"
+  "${FUCHSIA_BUILD_ZIRCON_ARGS[@]}" "$@"
 
 declare KERNEL_CMDLINE_FILE="${FUCHSIA_OUT_DIR}/build-zircon/kernel_cmdline.txt"
 

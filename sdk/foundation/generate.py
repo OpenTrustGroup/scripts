@@ -8,6 +8,13 @@ import os
 import shutil
 import sys
 
+FUCHSIA_ROOT = os.path.dirname(  # $root
+    os.path.dirname(             # scripts
+    os.path.dirname(             # sdk
+    os.path.dirname(             # foundation
+    os.path.abspath(__file__)))))
+
+sys.path += [os.path.join(FUCHSIA_ROOT, 'scripts', 'sdk', 'common')]
 from layout_builder import Builder, process_manifest
 
 
@@ -76,8 +83,8 @@ class CppBuilder(Builder):
 
     def install_cpp_sysroot_atom(self, atom):
         '''Installs a sysroot atom from the "cpp" domain.'''
-        base =  os.path.join(self.output, 'arch', self.metadata.target_arch,
-                             'sysroot')
+        base = os.path.join(self.output, 'arch', self.metadata.target_arch,
+                            'sysroot')
         for file in atom.files:
             dest = os.path.join(base, file.destination)
             self.make_dir(dest)

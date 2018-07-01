@@ -8,7 +8,7 @@ function get_build_dir {
 }
 
 function commands {
-  local cmds="$(ls "${fuchsia_dir}/scripts/devshell" | grep -v lib)"
+  local cmds="$(ls "${fuchsia_dir}/scripts/devshell" | grep -v -e '^lib$' -e '^tests$')"
 
   local newline=$'\n'
   local build_dir=$(get_build_dir)
@@ -80,7 +80,7 @@ function help {
 
 function usage {
   cat <<END
-usage: fx [--config CONFIG_FILE | --dir BUILD_DIR] [-x] COMMAND [...]
+usage: fx [--config CONFIG_FILE | --dir BUILD_DIR] [-i] [-x] COMMAND [...]
 
 Run Fuchsia development commands. Must be run with either a current working
 directory that is contained in a Fuchsia source tree or the FUCHSIA_DIR
@@ -97,6 +97,9 @@ optional arguments:
                         build configuration) is used by COMMAND.
   --dir=BUILD_DIR       Path to the build directory to use when running COMMAND.
                         If specified, FILE is ignored.
+  -i                    Iterative mode.  Repeat the command whenever a file is
+                        modified under your Fuchsia directory, not including
+                        out/.
   -x                    Print commands and their arguments as they are executed.
 
 optional shell extensions:
@@ -168,6 +171,9 @@ while [[ $# -ne 0 ]]; do
       # This tells fx-config-read not to use the file.
       export FUCHSIA_CONFIG=-
       ;;
+    -i)
+      declare iterative=1
+      ;;
     -x)
       export FUCHSIA_DEVSHELL_VERBOSITY=1
       ;;
@@ -212,5 +218,38 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
+declare -r cmd_and_args="$@"
 shift # Removes the command name.
-exec "${command_path}" "$@"
+
+"${command_path}" "$@"
+declare -r retval=$?
+if [ -z "${iterative}" ]; then
+  exit ${retval}
+elif which inotifywait >/dev/null; then
+  # Watch everything except out/ and files/directories beginning with "."
+  # such as lock files, swap files, .git, etc'.
+  inotifywait -qrme modify --exclude "/\." "${fuchsia_dir}" @"${fuchsia_dir}"/out | while read; do
+    # Drain all subsequent events in a batch.
+    # Otherwise when multiple files are changes at once we'd run multiple
+    # times.
+    read -d "" -t .01
+    # Allow at most one fx -i invocation per Fuchsia dir at a time.
+    # Otherwise multiple concurrent fx -i invocations can trigger each other
+    # and cause a storm.
+    echo "---------------------------------- fx -i ${cmd_and_args} ---------------------------------------"
+    "${command_path}" "$@"
+    echo "--- Done!"
+  done
+elif which apt-get >/dev/null; then
+  echo "Missing inotifywait"
+  echo "Try: sudo apt-get install inotify-tools"
+elif which fswatch >/dev/null; then
+  fswatch --one-per-batch --event=Updated -e "${fuchsia_dir}"/out/ -e "/\." . | while read; do
+    echo "---------------------------------- fx -i ${cmd_and_args} ---------------------------------------"
+    "${command_path}" "$@"
+    echo "--- Done!"
+  done
+else
+  echo "Missing fswatch"
+  echo "Try: brew install fswatch"
+fi

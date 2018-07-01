@@ -10,16 +10,16 @@
       }
     },
     "labels": {
-      "description": "A list of GN labels to build; useful for e.g. host tools",
+      "description": "A list of free-form GN labels to build; useful for e.g. host tools",
       "type": "array",
       "items": {
         "$ref": "#/definitions/gnLabel"
       }
     },
     "packages": {
-      "description": "A map of Fuchsia packages; each entry's key must match exactly the name of the package in the entry's value",
-      "type": "object",
-      "additionalProperties": {
+      "description": "A list of GN labels representing Fuchsia packages",
+      "type": "array",
+      "items": {
         "$ref": "#/definitions/gnLabel"
       }
     },
