@@ -67,11 +67,11 @@ append_to_extra_filelist() {
 
 echo "# filelist-tee-common /start" > ${EXTRA_ROOTFS_FILELIST}
 
-if [[ "${TEE}" = "trusty" ]]; then
-  trusty_filelist_entry=(
+if [[ -f "${TIPC_TEST_BUILDROOT}/tipc-test" ]]; then
+  entry=(
     "file /bin/tipc-test ${TIPC_TEST_BUILDROOT}/tipc-test 755 0 0"
   )
-  append_to_extra_filelist "${trusty_filelist_entry[@]}"
+  append_to_extra_filelist "${entry[@]}"
 fi
 
 echo "# filelist-tee-common /end" >> ${EXTRA_ROOTFS_FILELIST}
