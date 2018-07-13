@@ -412,12 +412,10 @@ class Gzos(OsTest):
     boot_complete_str = '$ '
     prompt_str = '$ '
     test_commands = [
-        TestCommand('killall smc_service', parser=None),
-        TestCommand('killall ree_agent', parser=None),
+        TestCommand('killall rpc_agent', parser=None),
         TestCommand('runtests -t smc-test /system/test/core', parser=ZirconRunTestParser),
         TestCommand('/system/test/gzos_lib_unittests', parser=GoogleTestParser),
-        TestCommand('/system/test/smc_service_test', parser=GoogleTestParser),
-        TestCommand('/system/test/ree_agent_unittests', parser=GoogleTestParser),
+        TestCommand('/system/test/rpc_agent_unittests', parser=GoogleTestParser),
     ]
 
 
