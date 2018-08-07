@@ -30,18 +30,18 @@ if [[ "${tee}" == "gzos" ]]; then
   if [[ "${version}" == "dev" ]]; then
     manifest_name="garnet"
     manifest_file="manifest/garnet"
-    manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/garnet"
+    manifest_url="https://review.gerrithub.io/OpenTrustGroup/garnet"
     manifest_branch="gzos"
   else
     manifest_name="manifest"
     manifest_file="gzos_stable"
-    manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/manifest"
+    manifest_url="https://review.gerrithub.io/OpenTrustGroup/manifest"
     manifest_branch="gzos"
   fi
 elif [[ "${tee}" == "trusty" ]]; then
   manifest_name="manifest"
   manifest_file="trusty"
-  manifest_url="ssh://review.gerrithub.io:29418/OpenTrustGroup/manifest"
+  manifest_url="https://review.gerrithub.io/OpenTrustGroup/manifest"
   manifest_branch="gzos"
 else
   usage
