@@ -412,6 +412,7 @@ class Gzos(OsTest):
     boot_complete_str = '$ '
     prompt_str = '$ '
     test_commands = [
+        TestCommand('k sm disable', parser=None),
         TestCommand('killall rpc_agent', parser=None),
         TestCommand('runtests -t smc-test /system/test/core', parser=ZirconRunTestParser),
         TestCommand('/system/test/gzos_lib_unittests', parser=GoogleTestParser),
