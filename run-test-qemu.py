@@ -25,6 +25,8 @@ from __future__ import print_function
 
 import argparse
 import os
+import time
+
 import pexpect
 import re
 from enum import Enum
@@ -107,6 +109,7 @@ class ExpectProcess:
             f.write(b'=== Expect Logs ===\n')
             p = pexpect.spawn(command=self.process_cmd, cwd=self.working_dir, logfile=f)
 
+            time.sleep(3) # wait for boot completed
             p.expect_exact(self.boot_complete_str)
             p.sendline()
 
