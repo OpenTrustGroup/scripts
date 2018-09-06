@@ -5,8 +5,8 @@
 """Runs source formatters on modified files.
 
 In order to find the files to be formatted, this uses `git diff-index` against
-the newest parent commit in the upstream branch (or against HEAD if there is no
-upstream branch). In result, files that are locally modified, staged or touched
+the newest parent commit in the upstream branch (or against HEAD if no such
+commit is found).  In result, files that are locally modified, staged or touched
 by any commits introduced on the local branch are formatted.
 """
 
@@ -33,7 +33,7 @@ GO_TOOL = os.path.join(paths.BUILDTOOLS_ROOT, host_platform, "go", "bin", "gofmt
 CHECK_HEADER_GUARDS_TOOL = os.path.join(paths.FUCHSIA_ROOT, "scripts", "style",
                                         "check-header-guards.py")
 
-C_CMD = [
+CLANG_CMD = [
     CLANG_TOOL, "-style=file", "-fallback-style=Google", "-sort-includes",
     "-i"
 ]
@@ -43,15 +43,16 @@ GO_CMD = [GO_TOOL, "-w"]
 FIX_HEADER_GUARDS_COMMAND = [CHECK_HEADER_GUARDS_TOOL, "--fix"]
 
 EXT_TO_COMMANDS = {
-    ".cc": [C_CMD],
-    ".cpp": [C_CMD],
+    ".cc": [CLANG_CMD],
+    ".cpp": [CLANG_CMD],
     ".dart": [DART_CMD],
     ".gn": [GN_CMD],
     ".gni": [GN_CMD],
     ".go": [GO_CMD],
-    ".h": [FIX_HEADER_GUARDS_COMMAND, C_CMD],
-    ".hh": [C_CMD],
-    ".hpp": [C_CMD],
+    ".h": [FIX_HEADER_GUARDS_COMMAND, CLANG_CMD],
+    ".hh": [CLANG_CMD],
+    ".hpp": [CLANG_CMD],
+    ".ts": [CLANG_CMD],
 }
 
 

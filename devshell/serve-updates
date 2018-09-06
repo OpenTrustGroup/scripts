@@ -4,22 +4,58 @@
 # found in the LICENSE file.
 
 ### start the update server and attach to a running fuchsia device
-## usage: fx serve-updates [-v] [-d <device>]
+## usage: fx serve-updates [-v] [-d <device>] [--direct]
 ##   -v verbose (do not suppress amber-srv output)
 ##   -d <device> to specify a specific target device
-##
-## -v must come before -d.
+##   --no-direct configure target to use an SSH tunnel as transport (deprecated)
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read
 
-# Flag order restrictions exist because we're using the get-device-addr helper
-# from vars.sh which needs -d to appear in $1 in order to work.
+function usage {
+  fx-command-help serve-updates
+}
+
+fx-standard-switches "$@"
+set -- "${FX_ARGV[@]}"
+
 verbose=false
-if [[ "$1" == "-v" ]]; then
-  verbose=true
+very_verbose=false
+device=""
+device_arg=""
+direct=true
+while (($#)); do
+  case "$1" in
+    -v|--verbose)
+      if $verbose; then
+        very_verbose=true
+      else
+        verbose=true
+      fi
+      ;;
+    -vv)
+      verbose=true
+      very_verbose=true
+      ;;
+    -d|--device)
+      device="$2"
+      device_arg="-d $2"
+      shift
+      ;;
+    --no-direct)
+      direct=false
+      ;;
+    --direct)
+      direct=true
+      ;;
+    *)
+      echo "Unrecognized option: $1"
+      usage
+      exit 1
+      ;;
+  esac
   shift
-fi
+done
 
 # Recover from present situation by finding any already-running amber-srv
 amber_srv_pid=$(pgrep amber-srv)
@@ -36,6 +72,12 @@ trap cleanup EXIT
 log() {
   # This format matches bootserver so that `fx serve` ui is easier to read.
   echo "$(date '+%Y-%m-%d %H:%M:%S') [serve-updates] $@"
+}
+
+log_verbose() {
+  if [[ "$very_verbose" == true ]]; then
+    log "$@"
+  fi
 }
 
 if [[ -z "${amber_srv_pid}" ]]; then
@@ -57,11 +99,20 @@ fi
 
 device_addr=
 update_device_addr() {
-  device_addr=$(get-device-addr "$@")
-  if [[ -z "${device_addr}" ]]; then
-    device_addr="$(fx-command-run netaddr --fuchsia 2>/dev/null)"
-  fi
+  device_addr="$(fx-command-run netaddr --nowait --timeout=1000 --fuchsia "$@" 2>/dev/null)"
 }
+
+if [[ "$(uname -s)" = "Darwin" ]]; then
+  ping_device() {
+    # Darwin's "ping" doesn't recognize IPv6 addresses and doesn't accept a
+    # timeout parameter, which appears to default to 10 seconds.
+    ping6 -c 1 "$1" >/dev/null
+  }
+else
+  ping_device() {
+    ping -c 1 -W 1 "$1" >/dev/null
+  }
+fi
 
 # State is used to prevent too much output
 state="discover"
@@ -72,34 +123,81 @@ while true; do
     exit 1
   fi
 
-  update_device_addr "$@"
-  if [[ -z "${device_addr}" ]]; then
-    if [[ "${state}" != "discover1" ]]; then
-      log "No device found, waiting..."
-      state="discover1"
+  if [[ "$direct" == false ]]; then
+    log_verbose "Updating device address with device arg \"$device\""
+    update_device_addr $device
+    if [[ -z "${device_addr}" ]]; then
+      if [[ "${state}" != "discover1" ]]; then
+        log "No device found, waiting..."
+        state="discover1"
+      fi
+      sleep 1
+      continue
     fi
-    sleep 1
-    continue
-  fi
 
-  if [[ "$state" == "discover" || "$state" == "discover1" ]]; then
-    log "SSH Tunnel connecting to ${device_addr}..."
-    if fx-command-run ssh -f -o LogLevel=ERROR -o ExitOnForwardFailure=yes -R 8083:localhost:8083 "${device_addr}" "echo -n"; then
-      if [[ "$state" != "ready" ]]; then
+    if [[ "$state" == "discover" || "$state" == "discover1" ]]; then
+      log "SSH Tunnel connecting to ${device_addr}..."
+      if fx-command-run ssh -f -o LogLevel=ERROR -o ExitOnForwardFailure=yes -R 8083:localhost:8083 "${device_addr}" "echo -n"; then
         log "Ready to push packages!"
         state="ready"
       fi
+
+      sleep 1
     fi
 
-    sleep 1
-  fi
+    if [[ "$state" == "ready" ]]; then
+      if fx-command-run ssh -O check "${device_addr}" 2> /dev/null; then
+        sleep 1
+      else
+        log "SSH Tunnel lost, restarting..."
+        state="discover"
+      fi
+    fi
 
-  if [[ "$state" == "ready" ]]; then
-    if fx-command-run ssh -O check "${device_addr}" 2> /dev/null; then
+  else # $direct == true
+
+    if [[ "$state" == "discover" || "$state" == "discover1" ]]; then
+      log_verbose "Updating device address (direct) with \"$device\""
+      update_device_addr $device
+      if [[ -z "${device_addr}" ]]; then
+        if [[ "${state}" != "discover1" ]]; then
+          log "No device found, waiting..."
+          state="discover1"
+        fi
+        sleep 1
+        continue
+      fi
+
+      log_verbose "Ping $device_addr"
+      if ping_device $device_addr; then
+        log "Device up"
+        state="config"
+      fi
+
       sleep 1
-    else
-      log "SSH Tunnel lost, restarting..."
-      state="discover"
+    fi
+
+    if [[ "$state" == "config" ]]; then
+      log "Registering devhost as update source"
+      if fx-command-run add-update-source --remove-localhost $device_arg; then
+        log "Ready to push packages!"
+        state="ready"
+      else
+        log "Device lost while configuring update source"
+        state="discover"
+      fi
+
+      sleep 1
+    fi
+
+    if [[ "$state" == "ready" ]]; then
+      log_verbose "Ping $device_addr"
+      if ping_device $device_addr; then
+        sleep 1
+      else
+        log "Device lost"
+        state="discover"
+      fi
     fi
   fi
 done

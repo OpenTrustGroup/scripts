@@ -21,6 +21,7 @@ ROOT_PUBSPECS = [
     'third_party/dart/pkg/front_end',
     'third_party/dart/pkg/kernel',
     'third_party/dart/pkg/telemetry',
+    'third_party/dart/pkg/testing',
     'third_party/dart-pkg/git/flutter/examples/flutter_gallery',
     'third_party/dart-pkg/git/flutter/packages/flutter',
     'third_party/dart-pkg/git/flutter/packages/flutter_test',
@@ -31,10 +32,7 @@ ROOT_PUBSPECS = [
 # These are the locations of yaml files listing the Dart dependencies of a git
 # project.
 PROJECT_DEPENDENCIES = [
-    'build/dart',
-    'topaz/app/chat',
     'topaz/app/dashboard',
-    'topaz/app/xi',
     'topaz/public/dart/widgets',
     'topaz/tools',
 ]

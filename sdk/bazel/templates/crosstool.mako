@@ -26,7 +26,7 @@ filegroup(
     name = "cc-compiler-prebuilts",
     srcs = [
         "clang/bin/clang",
-        "clang/bin/clang-7",
+        "clang/bin/clang-8",
         "clang/bin/llvm-ar",
         "clang/bin/clang++",
         "clang/bin/ld.lld",
@@ -36,7 +36,7 @@ filegroup(
         "clang/bin/llvm-strip",
         "clang/bin/llvm-objcopy",
     ] + glob([
-        "clang/lib/clang/7.0.0/include/**",
+        "clang/lib/clang/8.0.0/include/**",
     ]),
 )
 
@@ -80,7 +80,7 @@ filegroup(
     filegroup(
         name = "runtime-" + cpu,
         srcs = [
-            "clang/lib/clang/7.0.0/lib/fuchsia/libclang_rt.builtins-" + cpu + ".a",
+            "clang/lib/clang/8.0.0/" + cpu + "-fuchsia/lib/libclang_rt.builtins.a",
         ],
     )
     for cpu in TARGET_CPUS
@@ -108,3 +108,15 @@ cc_library(
     srcs = glob(["src/**"]),
     visibility = ["//visibility:public"],
 )
+
+[
+    filegroup(
+        name = "dist-" + cpu,
+        srcs = [
+            "clang/lib/clang/8.0.0/" + cpu + "-fuchsia/lib/libc++.so.2",
+            "clang/lib/clang/8.0.0/" + cpu + "-fuchsia/lib/libc++abi.so.1",
+            "clang/lib/clang/8.0.0/" + cpu + "-fuchsia/lib/libunwind.so.1",
+        ],
+    )
+    for cpu in TARGET_CPUS
+]

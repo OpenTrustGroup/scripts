@@ -7,7 +7,6 @@ package main
 
 import (
 	"archive/tar"
-	"bufio"
 	"compress/gzip"
 	"flag"
 	"fmt"
@@ -16,23 +15,14 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
 
 var archive = flag.Bool("archive", true, "Whether to archive the output")
 var output = flag.String("output", "fuchsia-sdk.tgz", "Name of the archive")
 var outDir = flag.String("out-dir", "", "Output directory")
-var toolchain = flag.Bool("toolchain", false, "Include toolchain")
 var toolchainLibs = flag.Bool("toolchain-lib", true, "Include toolchain libraries in SDK. Typically used when --toolchain is false")
-var sysroot = flag.Bool("sysroot", true, "Include sysroot")
-var kernelImg = flag.Bool("kernel-img", true, "Include kernel image")
-var kernelDebugObjs = flag.Bool("kernel-dbg", true, "Include kernel objects with debug symbols")
-var bootdata = flag.Bool("bootdata", true, "Include bootdata")
-var qemu = flag.Bool("qemu", true, "Include QEMU binary")
-var tools = flag.Bool("tools", true, "Include additional tools")
 var verbose = flag.Bool("v", false, "Verbose output")
 var dryRun = flag.Bool("n", false, "Dry run - print what would happen but don't actually do it")
 
@@ -65,17 +55,6 @@ type file struct {
 	src, dst string
 }
 
-type clientHeader struct {
-	flag *bool
-	src  string // Path to the source of the header, relative to root of the Fuchsia tree
-	dst  string // Path within the target sysroot
-}
-
-type clientLib struct {
-	flag *bool
-	name string
-}
-
 var (
 	hostOs     string
 	hostCpu    string
@@ -92,189 +71,33 @@ func init() {
 		hostOs = "mac"
 	}
 
-	zxBuildDir := "out/build-zircon"
-	x64ZxBuildDir := path.Join(zxBuildDir, "build-x64")
-	armZxBuildDir := path.Join(zxBuildDir, "build-arm64")
-	qemuDir := fmt.Sprintf("buildtools/%s-%s/qemu/", hostOs, hostCpu)
+	// ###########################################################################
+	// #                                 PSA                                     #
+	// #                                                                         #
+	// # Do not add any more content to this script! SDK contents should come    #
+	// # from the build system and not be handpicked out of the output dir.      #
+	// # See BLD-38 for more details.                                            #
+	// ###########################################################################
 
 	dirs := []dir{
+		// TODO(BLD-250): remove these.
 		{
-			sysroot,
-			path.Join(x64BuildDir, "sdks/zircon_sysroot/sysroot/"),
-			"sysroot/x86_64-fuchsia/",
-		},
-		{
-			sysroot,
-			path.Join(armBuildDir, "sdks/zircon_sysroot/sysroot/"),
-			"sysroot/aarch64-fuchsia",
-		},
-		{
-			qemu,
-			qemuDir,
-			"qemu",
-		},
-		{
-			tools,
-			"out/build-zircon/tools",
-			"tools",
-		},
-		{
-			toolchain,
-			fmt.Sprintf("buildtools/%s-%s/clang", hostOs, hostCpu),
-			"clang",
+			// TODO(https://crbug.com/724204): Remove this once Chromium starts using upstream compiler-rt builtins.
+			toolchainLibs,
+			fmt.Sprintf("buildtools/%s-%s/clang/lib/clang/8.0.0/x86_64-fuchsia/lib", hostOs, hostCpu),
+			"toolchain_libs/clang/8.0.0/x86_64-fuchsia/lib",
 		},
 		{
 			// TODO(https://crbug.com/724204): Remove this once Chromium starts using upstream compiler-rt builtins.
 			toolchainLibs,
-			fmt.Sprintf("buildtools/%s-%s/clang/lib/clang/7.0.0/lib/fuchsia", hostOs, hostCpu),
-			"toolchain_libs/clang/7.0.0/lib/fuchsia",
+			fmt.Sprintf("buildtools/%s-%s/clang/lib/clang/8.0.0/aarch64-fuchsia/lib", hostOs, hostCpu),
+			"toolchain_libs/clang/8.0.0/aarch64-fuchsia/lib",
 		},
 	}
 
-	clientHeaders := []clientHeader{
-		{
-			sysroot,
-			"garnet/public/lib/netstack/c/netconfig.h",
-			"netstack/netconfig.h",
-		},
-	}
-
-	clientLibs := []clientLib{}
-
-	files := []file{
-		{
-			kernelImg,
-			"out/build-zircon/build-arm64/qemu-zircon.bin",
-			"target/aarch64/zircon.bin",
-		},
-		{
-			kernelImg,
-			path.Join(armBuildDir, "bootdata-blob-qemu.bin"),
-			"target/aarch64/bootdata-blob.bin",
-		},
-		{
-			kernelImg,
-			path.Join(armBuildDir, "images/fvm.blk"),
-			"target/aarch64/fvm.blk",
-		},
-
-		{
-			kernelImg,
-			"out/build-zircon/build-x64/zircon.bin",
-			"target/x86_64/zircon.bin",
-		},
-		{
-			kernelImg,
-			path.Join(x64BuildDir, "bootdata-blob-pc.bin"),
-			"target/x86_64/bootdata-blob.bin",
-		},
-		{
-			kernelImg,
-			path.Join(x64BuildDir, "images/local-pc.esp.blk"),
-			"target/x86_64/local.esp.blk",
-		},
-		{
-			kernelImg,
-			path.Join(x64BuildDir, "images/zircon-pc.vboot"),
-			"target/x86_64/zircon.vboot",
-		},
-		{
-			kernelImg,
-			path.Join(x64BuildDir, "images/fvm.blk"),
-			"target/x86_64/fvm.blk",
-		},
-		{
-			kernelImg,
-			path.Join(x64BuildDir, "images/fvm.sparse.blk"),
-			"target/x86_64/fvm.sparse.blk",
-		},
-		{
-			sysroot,
-			path.Join(x64BuildDir, "obj/build/images/system_image.manifest.stripped/lib/libc++.so.2"),
-			"arch/x64/dist/libc++.so.2",
-		},
-		{
-			sysroot,
-			path.Join(armBuildDir, "obj/build/images/system_image.manifest.stripped/lib/libc++.so.2"),
-			"arch/arm64/dist/libc++.so.2",
-		},
-		{
-			sysroot,
-			path.Join(x64BuildDir, "obj/build/images/system_image.manifest.stripped/lib/libc++abi.so.1"),
-			"arch/x64/dist/libc++abi.so.1",
-		},
-		{
-			sysroot,
-			path.Join(armBuildDir, "obj/build/images/system_image.manifest.stripped/lib/libc++abi.so.1"),
-			"arch/arm64/dist/libc++abi.so.1",
-		},
-		{
-			sysroot,
-			path.Join(x64BuildDir, "obj/build/images/system_image.manifest.stripped/lib/libunwind.so.1"),
-			"arch/x64/dist/libunwind.so.1",
-		},
-		{
-			sysroot,
-			path.Join(armBuildDir, "obj/build/images/system_image.manifest.stripped/lib/libunwind.so.1"),
-			"arch/arm64/dist/libunwind.so.1",
-		},
-		{
-			tools,
-			path.Join(x64BuildDir, "host_x64/far"),
-			"tools/far",
-		},
-		{
-			tools,
-			path.Join(x64BuildDir, "host_x64/pm"),
-			"tools/pm",
-		},
-	}
-
-	components = []component{
-		{
-			kernelDebugObjs,
-			x64ZxBuildDir,
-			"sysroot/x86_64-fuchsia/debug",
-			customType,
-			copyKernelDebugObjs,
-		},
-		{
-			kernelDebugObjs,
-			x64BuildDir,
-			"sysroot/x86_64-fuchsia/debug",
-			customType,
-			copyIdsTxt,
-		},
-		{
-			kernelDebugObjs,
-			armZxBuildDir,
-			"sysroot/aarch64-fuchsia/debug",
-			customType,
-			copyKernelDebugObjs,
-		},
-		{
-			kernelDebugObjs,
-			armBuildDir,
-			"sysroot/aarch64-fuchsia/debug",
-			customType,
-			copyIdsTxt,
-		},
-	}
-	for _, c := range clientHeaders {
-		files = append(files, file{c.flag, c.src, path.Join("sysroot/x86_64-fuchsia/include", c.dst)})
-		files = append(files, file{c.flag, c.src, path.Join("sysroot/aarch64-fuchsia/include", c.dst)})
-	}
-	for _, c := range clientLibs {
-		files = append(files, file{c.flag, path.Join(x64BuildDir, "x64-shared", c.name), path.Join("sysroot/x86_64-fuchsia/lib", c.name)})
-		files = append(files, file{c.flag, path.Join(x64BuildDir, "x64-shared/lib.unstripped", c.name), path.Join("sysroot/x86_64-fuchsia/debug", c.name)})
-		files = append(files, file{c.flag, path.Join(armBuildDir, "arm64-shared", c.name), path.Join("sysroot/aarch64-fuchsia/lib", c.name)})
-		files = append(files, file{c.flag, path.Join(armBuildDir, "arm64-shared/lib.unstripped", c.name), path.Join("sysroot/aarch64-fuchsia/debug", c.name)})
-	}
+	components = []component{}
 	for _, d := range dirs {
 		components = append(components, component{d.flag, d.src, d.dst, dirType, nil})
-	}
-	for _, f := range files {
-		components = append(components, component{f.flag, f.src, f.dst, fileType, nil})
 	}
 }
 
@@ -294,53 +117,9 @@ func createLayout(manifest, fuchsiaRoot, outDir string) {
 		}
 		out, err := exec.Command(cmd, args...).CombinedOutput()
 		if err != nil {
-			log.Fatal("create_layout.py failed with output", string(out), "error", err)
+			log.Fatal("generate.py failed with output", string(out), "error", err)
 		}
 	}
-}
-
-func copyKernelDebugObjs(src, dstPrefix string) error {
-	// The kernel debug information lives in many .elf files in the out directory
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if !info.IsDir() && filepath.Ext(path) == ".elf" {
-			if err := copyFile(path, filepath.Join(dstPrefix, path[len(src):])); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-func copyIdsTxt(src, dstPrefix string) error {
-	// The ids.txt file has absolute paths but relative paths within the SDK are
-	// more useful to users.
-	srcIds, err := os.Open(filepath.Join(src, "ids.txt"))
-	if err != nil {
-		return fmt.Errorf("could not open ids.txt", err)
-	}
-	defer srcIds.Close()
-	if *dryRun {
-		return nil
-	}
-	dstIds, err := os.Create(filepath.Join(dstPrefix, "ids.txt"))
-	if err != nil {
-		return fmt.Errorf("could not create ids.txt", err)
-	}
-	defer dstIds.Close()
-	scanner := bufio.NewScanner(srcIds)
-	cwd, _ := os.Getwd()
-	absBase := filepath.Join(cwd, src)
-	for scanner.Scan() {
-		s := strings.Split(scanner.Text(), " ")
-		id, absPath := s[0], s[1]
-		relPath, err := filepath.Rel(absBase, absPath)
-		if err != nil {
-			log.Println("could not create relative path from absolute path", absPath, "and base", absBase, "skipping entry")
-		} else {
-			fmt.Fprintln(dstIds, id, relPath)
-		}
-	}
-	return nil
 }
 
 func copyFile(src, dst string) error {
@@ -487,7 +266,7 @@ only module.
 		}
 	}
 
-	createLayout("garnet", fuchsiaRoot, *outDir)
+	createLayout("topaz", fuchsiaRoot, *outDir)
 
 	for _, c := range components {
 		if *c.flag {

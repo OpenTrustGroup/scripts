@@ -11,6 +11,7 @@ if jiri_manifest != ""
   let g:fuchsia_build_dir = systemlist(g:fuchsia_dir . "/scripts/fx get-build-dir")[0]
   " Tell YCM where to find its configuration script
   let g:ycm_global_ycm_extra_conf = g:fuchsia_dir . '/scripts/youcompleteme/ycm_extra_conf.py'
+  let g:ycm_use_clangd = 0
 
   let &runtimepath = g:fuchsia_dir . "/scripts/vim/," .
         \ g:fuchsia_dir . "/garnet/public/lib/fidl/tools/vim/," .
@@ -52,9 +53,9 @@ if jiri_manifest != ""
       set filetype=dart
     endif
 
-    " Treat files in a packages directory (or subdirectory) without a filetype
-    " that don't have an extension as JSON files.
-    if &filetype == "" && full_path =~ "/packages/" && extension == ""
+    " Treat files in a packages or products directory (or subdirectory) without
+    " a filetype that don't have an extension as JSON files.
+    if &filetype == "" && full_path =~ "/\\(packages\\|products\\)/" && extension == ""
       set filetype=json sw=4
     endif
 

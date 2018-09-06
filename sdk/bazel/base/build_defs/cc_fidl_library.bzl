@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-load(":fidl.bzl", "FidlLibraryInfo")
+load(":fidl_library.bzl", "FidlLibraryInfo")
 
 # A cc_library backed by a FIDL library.
 #
@@ -96,7 +96,7 @@ _impl_wrapper = rule(
     }
 )
 
-def cc_fidl_library(name, library, visibility=None):
+def cc_fidl_library(name, library, deps=[], tags=[], visibility=None):
     gen_name = "%s_codegen" % name
     impl_name = "%s_impl" % name
 
@@ -124,8 +124,9 @@ def cc_fidl_library(name, library, visibility=None):
             # This is necessary in order to locate generated headers.
             gen_name + ".cc",
         ],
-        deps = [
+        deps = deps + [
             Label("//pkg/fidl_cpp"),
         ],
+        tags = tags,
         visibility = visibility,
     )

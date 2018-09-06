@@ -207,7 +207,7 @@ function fx-standard-switches {
   # not support the `-g` flag to `declare`.
   FX_ARGV=()
   while [[ $# -gt 0 ]]; do
-    if [[ "$1" = "--help" ]]; then
+    if [[ "$1" = "--help" || "$1" = "-h" ]]; then
       fx-print-command-help "$0"
       # Exit rather than return, so we bail out of the whole command early.
       exit 0
@@ -237,4 +237,9 @@ function fx-choose-build-concurrency {
   fi
 
   echo "$job_count"
+}
+
+function fx-cpu-count {
+  local -r cpu_count=$(getconf _NPROCESSORS_ONLN)
+  echo "$cpu_count"
 }

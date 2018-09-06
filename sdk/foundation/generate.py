@@ -22,7 +22,8 @@ class CppBuilder(Builder):
 
     def __init__(self, output, overlay):
         super(CppBuilder, self).__init__(
-            domains=['cpp', 'exe', 'fidl', 'image'])
+            domains=['cpp', 'exe', 'fidl', 'image'],
+            ignored_domains=['dart'])
         self.output = output
         self.is_overlay = overlay
 
@@ -30,7 +31,7 @@ class CppBuilder(Builder):
     def install_cpp_atom(self, atom):
         '''Installs an atom from the "cpp" domain.'''
         type = atom.tags['type']
-        if type == 'compiled_shared':
+        if type == 'compiled_shared' or type == 'compiled_static':
             self.install_cpp_prebuilt_atom(atom)
         elif type == 'sources':
             self.install_cpp_source_atom(atom)
@@ -49,7 +50,7 @@ class CppBuilder(Builder):
         for file in atom.files:
             destination = file.destination
             extension = os.path.splitext(destination)[1][1:]
-            if extension == 'so' or extension == "o":
+            if extension == 'so' or extension == 'a' or extension == 'o':
                 dest = os.path.join(self.output, 'arch',
                                     self.metadata.target_arch, destination)
                 if os.path.isfile(dest):
@@ -66,8 +67,10 @@ class CppBuilder(Builder):
                 self.make_dir(dest)
                 shutil.copy2(file.source, dest)
             else:
-                raise Exception('Error: unknow file extension "%s" for %s.' %
-                                (extension, atom.id))
+                dest = os.path.join(self.output, 'pkg', atom.id.name,
+                        destination)
+                self.make_dir(dest)
+                shutil.copy2(file.source, dest)
 
 
     def install_cpp_source_atom(self, atom):
@@ -99,14 +102,13 @@ class CppBuilder(Builder):
             return
         if self.is_overlay:
             return
-        files = atom.files
-        if len(files) != 1:
-            raise Exception('Error: executable with multiple files: %s.'
-                            % atom.id)
-        file = files[0]
-        destination = os.path.join(self.output, 'tools', file.destination)
-        self.make_dir(destination)
-        shutil.copy2(file.source, destination)
+        for file in atom.files:
+            extension = os.path.splitext(file.destination)[1][1:]
+            if extension == 'json':
+                continue
+            destination = os.path.join(self.output, 'tools', file.destination)
+            self.make_dir(destination)
+            shutil.copy2(file.source, destination)
 
 
     def install_fidl_atom(self, atom):

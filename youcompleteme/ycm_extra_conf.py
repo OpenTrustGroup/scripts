@@ -27,9 +27,12 @@ if os.path.exists(os.path.join(zircon_dir, 'compile_commands.json')):
 
 os.chdir(fuchsia_root)
 fuchsia_build = subprocess.check_output(
-    [os.path.join(fuchsia_paths.FUCHSIA_ROOT, 'scripts/fx'), 'get-build-dir']).strip()
+    [os.path.join(fuchsia_paths.FUCHSIA_ROOT, 'scripts/fx'),
+     'get-build-dir']
+    ).strip().decode('utf-8')
 
-fuchsia_clang = os.path.join(fuchsia_paths.BUILDTOOLS_PATH, 'clang')
+fuchsia_clang = os.path.realpath(fuchsia_paths.CLANG_PATH)
+fuchsia_sysroot = os.path.join(fuchsia_paths.BUILDTOOLS_PATH, 'sysroot')
 ninja_path = os.path.join(fuchsia_root, 'buildtools', 'ninja')
 
 # Get the name of the zircon project from GN args.
@@ -44,19 +47,19 @@ if match:
 common_flags = [
     '-std=c++14',
     '-xc++',
-    '-isystem',
-    fuchsia_clang + '/include',
-    '-isystem',
-    fuchsia_clang + '/include/c++/v1',
-    '-I' + fuchsia_root,
-    '-I' + fuchsia_build + '/gen'
+    '-I', fuchsia_root,
+    '-I', os.path.join(fuchsia_build, 'gen'),
+    '-isystem', os.path.join(fuchsia_sysroot, 'usr', 'include'),
+    '-isystem', os.path.join(fuchsia_clang, 'include'),
+    '-isystem', os.path.join(fuchsia_clang, 'include', 'c++', 'v1'),
 ]
 
 # Add the sysroot include if we found the zircon project
 if target_cpu:
-    arch_flags = ['-I' + os.path.join(
-        fuchsia_root, 'out/build-zircon', 'build-' + target_cpu, 'sysroot/include')]
-
+  arch_flags = ['-I' + os.path.join(fuchsia_root,
+                                    'out/build-zircon',
+                                    'build-' + target_cpu,
+                                    'sysroot/include')]
 
 def GetClangCommandFromNinjaForFilename(filename):
   """Returns the command line to build |filename|.
