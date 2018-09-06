@@ -32,7 +32,7 @@ if [[ "${tee}" == "gzos" ]]; then
     manifest_name="garnet"
     manifest_file="manifest/garnet"
     manifest_url="https://review.gerrithub.io/OpenTrustGroup/garnet"
-    manifest_branch="gzos"
+    manifest_branch="gzos_dev"
   else
     manifest_name="manifest"
     manifest_file="gzos_stable"

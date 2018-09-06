@@ -4,7 +4,7 @@
     <project name="scripts"
              path="scripts"
              remote="https://review.gerrithub.io/OpenTrustGroup/scripts"
-             remotebranch="gzos"
+             remotebranch="gzos_dev"
              gerrithost="https://review.gerrithub.io"/>
   </projects>
   <hooks>
