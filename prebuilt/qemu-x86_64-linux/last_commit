@@ -1,1 +1,1 @@
-bc72490fd5dbf40832d7f8ddb34c8dea254bd155 hw/arm/virt: add Trusty device nodes
+e1a4f886bf71e9f5da81b6c5ae73c4990351600d hw/arm/virt: increased secure dram size (32MB->64MB)
