@@ -21,7 +21,7 @@ fi
 dev_root=`jiri -show-root`
 
 jiri snapshot /tmp/gzos_stable.tmp
-sed 's/remotebranch="gzos" revision="[0-9a-z]\+"/remotebranch="gzos"/' /tmp/gzos_stable.tmp > ${1}
+sed 's/remotebranch="gzos_dev" revision="[0-9a-z]\+"/remotebranch="gzos"/' /tmp/gzos_stable.tmp > ${1}
 
 echo "Manifest generated."
 echo "Please compare and replace the content of ${dev_root}/manifest/gzos_stable with ${1} if needed."
