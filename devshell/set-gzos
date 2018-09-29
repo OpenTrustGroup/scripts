@@ -6,26 +6,50 @@
 
 ### set gzos build configuration
 
-## usage: fx set-gzos TARGET
+## usage: fx set-gzos TARGET [[--build-dir] OUTDIR]
+##               [--boards B1,B2,...]
+##               [--products P1,P2,...]
 ##               [--packages P1,P2,...]
+##               [--netboot]
 ##               [--args ARG] [--help-args [ARG]] [--variant VARIANT]
 ##               [--ccache|--no-ccache]
 ##               [--release]
+##               [--zircon-arg ARG]
 ##
-## Sets gzos build options.
+## where TARGET is target platform or project
 ##
-## required arguments:
-##   TARGET                Target platform or project
+## OUTDIR is the directory where the build output goes.
+## If it begins with `//` or `out/` then it's taken as relative to FUCHSIA_DIR.
+## Otherwise it should be an absolute path or a path relative to the current
+## working directory that winds up in `FUCHSIA_DIR/out`.
+## It defaults to `out/TARGET`.
+##
+## This is a wrapper around running `gn gen --check OUTDIR --args ...`.
+## If GN fails with an error, `fx set` does not change anything.
+## If GN succeeds, this also points subsequent `fx` commands at OUTDIR,
+## just as `fx use` does and ensures Goma is ready (if enabled).
 ##
 ## optional arguments:
-##   --packages            Include the listed packages (separated by commas) in the
-##                         system build. Defaults to the default set of packages
-##                         for the current layer (e.g., "garnet/packages/default"
-##                         for the Garnet layer). If the --packages argument is
-##                         given multiple times, all the specified packages are
-##                         included in the build.
+##   --build-dir OUTDIR    Using this option is deprecated.  It's the same
+##                         as just giving OUTDIR as a non-option argument.
+##   --boards              Use the listed board target definition (seperated by
+##                         comas) in the build, each board results in an import
+##                         statement and MUST define the `fuchsia_packages`
+##                         variable as well as deal with variable re-definition.
+##   --products            Include the listed products (separated by commas) in
+##                         the build. Defaults to the default product for the
+##                         current layer (e.g., "garnet/packages/default" for
+##                         the Garnet layer). If the --products argument is
+##                         given multiple times, the products configurations
+##                         are merged.
+##   --packages            Additional packages to be built and made available.
+##                         If the --packages argument is given multiple times,
+##                         all the specified packages are included in the build.
 ##   --variant             Pass a `select_variant=[VARIANT*,...]` GN build argument
 ##                         collecting all the --variant arguments in order.
+##   --fuzz-with           Pass a sanitizer name, e.g. "--fuzz-with asan" to
+##                         enable ALL supporting fuzzers.  Use --variant for
+##                         individual fuzzers, e.g. "--variant asan-fuzzer/foo".
 ##   --args                Additional argument to pass to gn. If the --args
 ##                         argument is given multiple times, all the specified
 ##                         arguments are passed to gn.
@@ -50,6 +74,8 @@
 ##                         Defaults to detecting whether the CCACHE_DIR environment
 ##                         variable is set to a directory.
 ##   --release             an alias for "--args=is_debug=false"
+##   --zircon-arg ARG      Additional arguments to pass to Zircon make. Can be given
+##                         multiple times.
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read-if-present
@@ -109,6 +135,9 @@ function search_projects {
 }
 
 function main {
+  fx-standard-switches "$@"
+  set -- "${FX_ARGV[@]}"
+
   if [[ $# -lt 1 ]]; then
     list_projects
     return 1
@@ -134,23 +163,66 @@ function main {
   local gn_cmd='gen'
   local -a gn_switches=(--check)
   local gn_args="target_cpu=\"${arch}\""
-  local variant=
-  local packages=
-  local extra_packages=
+  local boards=()
+  local products=()
+  local packages=()
+  local zircon_args=()
+  local extra_packages=()
   local build_dir=
+  local variant=
   local ccache
   while [[ $# -ne 0 ]]; do
-    case $1 in
-      --release)
-        gn_args+=" is_debug=false"
+    case "$1" in
+      --boards)
+        if [[ $# -lt 2 ]]; then
+          fx-command-help
+          return 1
+        fi
+        # Multiple boards may be comma separated
+        IFS=, boards+=("$2")
+        shift
+        ;;
+      --products)
+        if [[ $# -lt 2 ]]; then
+          fx-command-help
+          return 1
+        fi
+        # Multiple products may be comma separated
+        IFS=, products+=("$2")
+        shift
         ;;
       --packages)
         if [[ $# -lt 2 ]]; then
           fx-command-help
           return 1
         fi
-        packages+="${packages:+,}$2"
+        # Multiple packages may be comma separated
+        IFS=, packages+=("$2")
         shift
+        ;;
+      --zircon-arg)
+        if [[ $# -lt 2 ]]; then
+          fx-command-help
+          return 1
+        fi
+        zircon_args+=("$2")
+        shift
+        ;;
+      --netboot)
+        extra_packages+=('build/packages/netboot')
+        ;;
+      # TODO(mcgrathr): Remove this after a deprecation period.
+      --build-dir)
+        if [[ $# -lt 2 ]]; then
+          fx-command-help
+          return 1
+        fi
+        echo >&2 "NOTE: The --build-dir switch is deprecated; give $2 alone."
+        build_dir="$2"
+        shift
+        ;;
+      --release)
+        gn_args+=" is_debug=false"
         ;;
       --variant)
         if [[ $# -lt 2 ]]; then
@@ -158,6 +230,14 @@ function main {
           return 1
         fi
         variant+="\"$2\","
+        shift
+        ;;
+      --fuzz-with)
+        if [[ $# -lt 2 ]]; then
+          fx-command-help
+          return 1
+        fi
+        variant+="{variant=\"$2-fuzzer\" target_type=[\"fuzzed_executable\"]},"
         shift
         ;;
       --args)
@@ -183,9 +263,18 @@ function main {
       --no-ccache)
         ccache=0
         ;;
-      *)
+      --*)
         fx-command-help
         return 1
+        ;;
+      *)
+        # A non-option argument is the build_dir, but there can be only one.
+        if [[ -n "$build_dir" ]]; then
+          fx-command-help
+          return 1
+        fi
+        build_dir="$1"
+        ;;
     esac
     shift
   done
@@ -201,15 +290,27 @@ function main {
 
     # Official zircon projects' system partition is built by fuchisa's package manager.
     # For third party projects, we just use bootfs for system partition
-    extra_packages+=",build/packages/user_bootfs"
+    IFS=, extra_packages+=("build/packages/user_bootfs")
 
     # Zedboot image requires some binaries(e.g. netsvc) that may not available
     # in third party project. Thus we disable building zedboot image.
     gn_args+=" disable_zedboot=true"
+
+    if [[ -z "${packages}" ]]; then
+      IFS=, packages+=("garnet/packages/gzos")
+    fi
   fi
 
-  if [[ -z "${packages}" ]]; then
-    packages="garnet/packages/gzos"
+  if [[ -z "${products}${packages}" ]]; then
+    # This is the default logic GN would use, but if a user specified --netboot
+    # we would short-circuit the logic, so repeat it here.
+    local layers
+    layers="$(${FUCHSIA_DIR}/build/gn/guess_layer.py)" || return 1
+    readonly layers
+    local layer
+    for layer in $layers; do
+      products+="${products:+,}$layer/products/default"
+    done
   fi
 
   # Remove any trailing slash from build directory name.
@@ -243,9 +344,23 @@ function main {
       ;;
   esac
 
+  for board in ${boards[@]}; do
+    gn_args+=" import(\"//${board}\")"
+  done
+
+  gn_args+=" fuchsia_products=["
+  for product in ${products[@]}; do
+    gn_args+="\"${product}\","
+  done
+  gn_args+="]"
+
+  if [[ -z "${boards}" ]]; then
   gn_args+=" fuchsia_packages=["
-  IFS=,
-  for package in ${packages}${extra_packages}; do
+  else
+    # Board configs MUST declare fuchsia_packages.
+    gn_args+=" fuchsia_packages+=["
+  fi
+  for package in ${packages[@]} ${extra_packages[@]}; do
     gn_args+="\"${package}\","
   done
   gn_args+="]"
@@ -253,6 +368,9 @@ function main {
   if [[ -n "${variant}" ]]; then
     gn_args+=" select_variant=[${variant}]"
   fi
+
+  mkdir -p "${build_dir}"
+  echo "${zircon_args[@]}" > "${build_dir}.zircon-args"
 
   # Using a subshell with -x prints out the gn command precisely with shell
   # quoting so a cut&paste to the command line works.  Always show the real
@@ -269,6 +387,7 @@ function main {
 # Generated by "fx set-gzos".
 FUCHSIA_BUILD_DIR="${build_dir}"
 FUCHSIA_ARCH="${arch}"
+FUCHSIA_BUILD_ZIRCON_ARGS=(${zircon_args})
 ZIRCON_PROJECT="${zircon_project}"
 USE_CCACHE="${ccache}"
 TEE="gzos"
