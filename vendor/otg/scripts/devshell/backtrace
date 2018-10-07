@@ -1,0 +1,25 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### show backtrace from a logfile
+
+## usage: fx backtrace [LOG_FILE]
+##
+## show backtrace from a logfile
+##
+## optional arguments:
+##   LOG_FILE               Log file path (default: expect.log)
+##
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+otg-read-config
+
+LOG_FILE=$1
+if [[ -z "${LOG_FILE}" ]]; then
+  LOG_FILE="${OTG_ROOT_DIR}/expect.log"
+fi
+
+cat ${LOG_FILE} | "${OTG_ROOT_DIR}/scripts/remove_tty_control_code.py" |
+"${OTG_ROOT_DIR}/zircon/scripts/symbolize" -b "${OTG_TEE_OUT_DIR}/arm64" "${OTG_TEE_OUT_DIR}/build-zircon"

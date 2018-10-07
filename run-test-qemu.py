@@ -29,7 +29,7 @@ import pexpect
 import re
 from enum import Enum
 
-ATF_IMAGE_PATH = os.environ['FUCHSIA_OUT_DIR'] + "/build-atf/images"
+ATF_IMAGE_PATH = os.environ['ATF_BUILDROOT'] + "/images"
 LOGFILE_PATH = os.environ['FUCHSIA_DIR'] + "/expect.log"
 
 parser = argparse.ArgumentParser()
@@ -407,8 +407,8 @@ class TrustyUtParser(TestResultParser):
         return {subtest.name: subtest}
 
 
-class Gzos(OsTest):
-    os_name = 'gzos'
+class Gztee(OsTest):
+    os_name = 'gztee'
     boot_complete_str = '$ '
     prompt_str = '$ '
     test_commands = [

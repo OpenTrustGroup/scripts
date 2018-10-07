@@ -1,0 +1,22 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+set -eo pipefail
+
+if [[ "$1" == "-c" ]]; then
+  printf "Deleting ${OTG_REE_OUT_DIR}\n"
+  rm -rf ${OTG_REE_OUT_DIR}
+fi
+
+mkdir -p ${OTG_REE_OUT_DIR}
+
+otg-command-run build-extra-linux-tools
+otg-command-run build-linux-rootfs
+
+kernel_img="${OTG_PREBUILT_BINARY_PATH}/linux/Image"
+initrd_img="${OTG_REE_OUT_DIR}/build-linux-rootfs/rootfs.cpio.gz"
+kernel_cmdline="console=ttyAMA0,115200 earlyprintk=serial,ttyAMA0,115200"
+
+otg-save-ree-boot-param "${kernel_img}" "${initrd_img}" "${kernel_cmdline}"

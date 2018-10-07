@@ -1,0 +1,34 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build OTG projects which are set by `fx vendor otg set` and then u-boot and arm-trusted-firmware
+
+## usage: fx vendor otg full-build [-c]
+##
+## arguments:
+##  -c              clean and build
+
+set -e
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+otg-read-config
+
+declare clean_build=""
+
+if [[ "${1}" == "-c" ]]; then
+  printf "Deleting ${OTG_OUT_DIR}\n"
+  rm -rf "${OTG_OUT_DIR}"
+
+  printf "Deleting ${OTG_TEE_OUT_DIR}\n"
+  rm -rf "${OTG_TEE_OUT_DIR}"
+
+  printf "Deleting ${OTG_REE_OUT_DIR}\n"
+  rm -rf "${OTG_REE_OUT_DIR}"
+fi
+
+otg-command-run build ree
+otg-command-run build tee
+otg-command-run build uboot
+otg-command-run build atf

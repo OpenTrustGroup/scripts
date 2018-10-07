@@ -1,0 +1,98 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build Linux kernel
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+
+mkdir -p "${FUCHSIA_DIR}/out-linux"
+
+readonly LINUX_BUILDROOT="${FUCHSIA_DIR}/out-linux/build-linux"
+readonly LINUX_PATH="${FUCHSIA_DIR}/linux"
+readonly LINUX_ARCH="arm64"
+readonly LINUX_PREBUILT_DIR="${FUCHSIA_DIR}/scripts/prebuilt/linux"
+readonly SCRIPT_DIR="${FUCHSIA_DIR}/scripts"
+readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
+
+JOBS=`getconf _NPROCESSORS_ONLN` || {
+  Cannot get number of processors
+  exit 1
+}
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+
+declare VERBOSE="${VERBOSE:-0}"
+declare CLEAN="${CLEAN:-false}"
+declare PLATFORM="${PLATFORM:-qemu}"
+declare LINUX_FLAGS="LOCALVERSION= O=${LINUX_BUILDROOT} ARCH=${LINUX_ARCH}"
+
+usage() {
+  printf '%s: [-c] [-v] [-p platform]\n' "$0"
+  printf '  -c            clean & build\n'
+  printf '  -v            show verbose compiling messages\n'
+  printf '  -p [platform] select which platform to build, default: %s\n' "${PLATFORM}"
+}
+
+while getopts "chp:v" opt; do
+  case "${opt}" in
+    c) CLEAN="true" ;;
+    h) usage ; exit 0 ;;
+    p) PLATFORM="${OPTARG}" ;;
+    v) VERBOSE="1" ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ "${CLEAN}" = "true" ]]; then
+  echo "Cleaning linux..."
+  rm -rf -- "${LINUX_BUILDROOT}"
+fi
+
+if [[ "${USE_CCACHE}" = "1" ]]; then
+  export CROSS_COMPILE="$(which ccache) ${TOOLCHAIN_PREFIX}"
+else
+  export CROSS_COMPILE="${TOOLCHAIN_PREFIX}"
+fi
+
+echo "Building linux..."
+
+mkdir -p ${LINUX_BUILDROOT}
+
+# Generate Linux .config file
+cd ${LINUX_PATH} && \
+ARCH=${LINUX_ARCH} \
+scripts/kconfig/merge_config.sh -O ${LINUX_BUILDROOT} ${LINUX_PATH}/arch/arm64/configs/defconfig ${SCRIPT_DIR}/kconfigs/${PLATFORM}.conf
+
+make -j ${JOBS} V=${VERBOSE} ${LINUX_FLAGS}
+
+echo ""
+echo "Updating linux prebuilt image... "
+cp ${LINUX_BUILDROOT}/vmlinux ${LINUX_PREBUILT_DIR}/
+cp ${LINUX_BUILDROOT}/System.map ${LINUX_PREBUILT_DIR}/
+cp ${LINUX_BUILDROOT}/arch/arm64/boot/Image ${LINUX_PREBUILT_DIR}/
+cp ${LINUX_BUILDROOT}/usr/gen_init_cpio ${LINUX_PREBUILT_DIR}/
+
+echo "Compressing vmlinux... "
+lzma -z2f ${LINUX_PREBUILT_DIR}/vmlinux
+
+set +e # ignore the following commands error status
+last_commit="$(git log -1 --pretty=oneline)"
+old_last_commit="$(cat ${LINUX_PREBUILT_DIR}/last_commit)"
+config_diff="$(diff ${LINUX_BUILDROOT}/.config ${LINUX_PREBUILT_DIR}/config)"
+set -e
+
+LIGHT_RED='\033[1;31m'
+NC='\033[0m' # No Color
+NOTICE="${LIGHT_RED}NOTICE:${NC}"
+
+if [[ "${last_commit}" != "${old_last_commit}" ]] || [[ ! -z "${config_diff}" ]]; then
+  echo ""
+  ../../../devshell/cp ${LINUX_BUILDROOT}/.config ${LINUX_PREBUILT_DIR}/config
+  echo ${last_commit} > ${LINUX_PREBUILT_DIR}/last_commit
+  echo -e "${NOTICE} Linux source code or config was changed. Remember to upload prebuilt files to gerrit for review."
+  echo -e "${NOTICE} (file path: ${LINUX_PREBUILT_DIR})"
+  echo ""
+fi

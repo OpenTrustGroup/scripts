@@ -1,5 +1,4 @@
 #!/bin/bash
-# Copyright 2018 Open Trust Group
 # Copyright 2017 The Fuchsia Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -12,27 +11,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read
 
 echo "Building zircon..."
-declare TARGET_LIST=${ZIRCON_PROJECT}
-if [[ -z "${TEE}" ]]; then
-  TARGET_LIST=${FUCHSIA_ARCH}
-fi
-
 "${FUCHSIA_DIR}/scripts/build-zircon.sh" \
-  -t "${TARGET_LIST}" \
+  -t "${FUCHSIA_ARCH}" \
   -j "$(fx-choose-build-concurrency)" \
   "${FUCHSIA_BUILD_ZIRCON_ARGS[@]}" "$@"
-
-declare KERNEL_CMDLINE_FILE="${FUCHSIA_OUT_DIR}/build-zircon/kernel_cmdline.txt"
-
-echo "Generating ${KERNEL_CMDLINE_FILE}..."
-cat >"${KERNEL_CMDLINE_FILE}" <<END
-TERM=screen-256color
-kernel.entropy-mixin=$(head -c 32 /dev/urandom | shasum -a 256 | awk '{ print $1 }')
-kernel.halt-on-panic=true
-kernel.shell=false
-kernel.oom.enable=false
-kernel.oom.redline-mb=1
-ktrace.bufsize=1
-virtcon.disable=true
-netsvc.disable=true
-END
