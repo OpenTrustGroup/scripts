@@ -1,5 +1,4 @@
 #!/bin/bash
-# Copyright 2018 Open Trust Group
 # Copyright 2017 The Fuchsia Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -90,7 +89,6 @@
 ##                         multiple times.
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
-fx-config-read-if-present
 
 function main {
   fx-standard-switches "$@"
@@ -394,11 +392,5 @@ function main {
     fi
   fi
 }
-
-if [[ -x "${FUCHSIA_DIR}/scripts/devshell/set-${TEE}" ]]; then
-  printf "Configure ${TEE}\n"
-  fx-command-run set-${TEE} "$@"
-  exit 0
-fi
 
 main "$@"

@@ -9,12 +9,13 @@
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 
+# TODO(james): move ${FUCHSIA_DIR}/scripts/vendor/ to ${FUCHSIA_DIR}/vendor/
 function main {
   if [[ $# -lt 2 ]]; then
     fx-command-help
 
     echo >&2 "commands: "
-    for d in "${FUCHSIA_DIR}"/vendor/*; do
+    for d in "${FUCHSIA_DIR}"/scripts/vendor/*; do
       for f in "$d"/scripts/devshell/*; do
         if [[ -x "$f" ]]; then
           echo >&2 "  $(basename $d)" "$(basename $f)"
@@ -25,7 +26,7 @@ function main {
     return 1
   fi
 
-  vendor_cmd_path="${FUCHSIA_DIR}/vendor/$1/scripts/devshell/$2"
+  vendor_cmd_path="${FUCHSIA_DIR}/scripts/vendor/$1/scripts/devshell/$2"
 
   if [[ ! -x "${vendor_cmd_path}" ]]; then
     echo >&2 "command $1 $2 not found!"

@@ -1,5 +1,4 @@
 #!/bin/bash
-# Copyright 2018 Open Trust Group
 # Copyright 2017 The Fuchsia Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -10,22 +9,6 @@
 set -e
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
-fx-config-read
 
-if [[ -z "${TEE}" ]]; then
-  fx-command-run build-zircon
-  fx-command-run build
-  exit 0
-fi
-
-if [[ "${TEE}" = "gzos" ]]; then
-  fx-command-run build-zircon
-  fx-command-run build
-elif [[ "${TEE}" = "trusty" ]]; then
-  fx-command-run build-trusty
-fi
-
-fx-command-run build-soc-term
-fx-command-run build-extra-linux-tools
-fx-command-run build-linux-rootfs
-fx-command-run build-atf
+fx-command-run build-zircon
+fx-command-run build

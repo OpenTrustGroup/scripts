@@ -1,0 +1,36 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build third_party/qemu
+
+set -eo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+
+declare QEMU_DIR="${OTG_ROOT_DIR}/third_party/qemu"
+
+jobs=`getconf _NPROCESSORS_ONLN` || {
+  Cannot get number of processors
+  exit 1
+}
+
+echo "Building QEMU..."
+"${OTG_ROOT_DIR}/scripts/build-qemu.sh" "-o${OTG_OUT_DIR}" "-d${OTG_PREBUILT_BINARY_PATH}" "-j${jobs}"
+
+echo ""
+echo "Updating QEMU prebuilt binaries... "
+
+git_commit="$(cd ${QEMU_DIR}; git log -1 --pretty=oneline)"
+last_commit_file="${THIRD_PARTY_QEMU}/last_commit"
+
+LIGHT_RED='\033[1;31m'
+NC='\033[0m' # No Color
+NOTICE="${LIGHT_RED}NOTICE:${NC}"
+
+echo ${git_commit} > ${last_commit_file}
+echo ""
+echo -e "${NOTICE} QEMU prebuilt is updated. Remember to submit prebuilt patch to gerrit for review."
+echo -e "${NOTICE} (file path: ${THIRD_PARTY_QEMU})"
+echo ""

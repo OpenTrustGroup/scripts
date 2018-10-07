@@ -1,4 +1,3 @@
-# Copyright 2018 Open Trust Group
 # Copyright 2017 The Fuchsia Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -12,16 +11,9 @@ fi
 export FUCHSIA_DIR="$(dirname $(dirname $(dirname "${devshell_lib_dir}")))"
 export FUCHSIA_OUT_DIR="${FUCHSIA_OUT_DIR:-${FUCHSIA_DIR}/out}"
 export FUCHSIA_CONFIG="${FUCHSIA_CONFIG:-${FUCHSIA_DIR}/.config}"
-export TOOLCHAIN_CONFIG="${FUCHSIA_DIR}/.toolchain_config"
 unset devshell_lib_dir
 
 export ZIRCON_TOOLS_DIR="${FUCHSIA_OUT_DIR}/build-zircon/tools"
-
-HOST_ARCH="$(uname -m)"
-HOST_OS="$(uname | tr '[:upper:]' '[:lower:]')"
-HOST_TRIPLE="${HOST_ARCH}-${HOST_OS}"
-
-export THIRD_PARTY_QEMU="${FUCHSIA_DIR}/scripts/prebuilt/qemu-${HOST_TRIPLE}"
 
 if [[ "${FUCHSIA_DEVSHELL_VERBOSITY}" -eq 1 ]]; then
   set -x
@@ -47,10 +39,6 @@ function fx-config-read-if-present {
     return 1
   fi
 
-  if [[ -f "${TOOLCHAIN_CONFIG}" ]]; then
-    source ${TOOLCHAIN_CONFIG}
-  fi
-
   # Paths are relative to FUCHSIA_DIR unless they're absolute paths.
   if [[ "${FUCHSIA_BUILD_DIR:0:1}" != "/" ]]; then
     FUCHSIA_BUILD_DIR="${FUCHSIA_DIR}/${FUCHSIA_BUILD_DIR}"
@@ -59,7 +47,7 @@ function fx-config-read-if-present {
   export FUCHSIA_BUILD_DIR FUCHSIA_ARCH
 
   export ZIRCON_BUILDROOT="${ZIRCON_BUILDROOT:-${FUCHSIA_OUT_DIR}/build-zircon}"
-  export ZIRCON_BUILD_DIR="${ZIRCON_BUILD_DIR:-${ZIRCON_BUILDROOT}/build-${ZIRCON_PROJECT}}"
+  export ZIRCON_BUILD_DIR="${ZIRCON_BUILD_DIR:-${ZIRCON_BUILDROOT}/build-${FUCHSIA_ARCH}}"
   return 0
 }
 
