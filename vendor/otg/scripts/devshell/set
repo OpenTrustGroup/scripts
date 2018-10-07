@@ -1,0 +1,71 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### set up OTG projects
+
+## usage: fx vendor otg set TEE_TARGET [--ree REE_TARGET]
+##     or fx vendor otg set [--list]
+##
+## arguments:
+##  --ree        Rich OS target
+##  --list       List available TEE and REE targets
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+
+declare -A default_ree_targets=(
+  ["gztee"]="fuchsia"
+  ["trusty"]="linux"
+)
+
+function main {
+  if [[ $# -lt 1 ]]; then
+    otg-command-help
+    return 1
+  fi
+
+  if [[ "$1" == "--list" ]];then
+    otg-list-projects
+    return 0
+  fi
+
+  local tee="${1}"
+  local ree=${default_ree_targets["${tee}"]}
+  shift
+
+  while [[ $# -ne 0 ]]; do
+    case "$1" in
+      --ree)
+        if [[ $# -lt 2 ]]; then
+          otg-command-help
+          return 1
+        fi
+        ree="$2"
+        shift
+        ;;
+      *)
+        otg-command-help
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  if [[ ! -x "${OTG_PROJECTS_SCRIPT_PATH}/tee/${tee}" ]]; then
+    printf "TEE build script not found: ${OTG_PROJECTS_SCRIPT_PATH}/tee/${tee}\n"
+    return 1
+  fi
+
+  if [[ ! -x "${OTG_PROJECTS_SCRIPT_PATH}/ree/${ree}" ]]; then
+    printf "REE build script not found: ${OTG_PROJECTS_SCRIPT_PATH}/ree/${ree}\n"
+    return 1
+  fi
+
+  printf "Generating config file ${OTG_CONFIG}\n"
+  otg-write-config "${tee}" "${ree}"
+  printf "Done.\n\n"
+  cat ${OTG_CONFIG}
+}
+
+main "$@"

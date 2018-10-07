@@ -1,0 +1,91 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build arm-trusted-firmware
+
+## usage: fx vendor otg build-atf [-c] [-v] [-d] [-p platform]
+##
+## arguments:
+##  -c              clean and build
+##  -v              show verbose compiling messages
+##  -d              debug build (images with debug info), default: release build
+##  -p <platform>   select which platform to build, default: qemu
+
+set -eo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+otg-read-config
+
+readonly ATF_PATH="${OTG_ROOT_DIR}/arm-trusted-firmware"
+readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
+
+jobs=`getconf _NPROCESSORS_ONLN` || {
+  Cannot get number of processors
+  exit 1
+}
+
+declare verbose=0
+declare clean_build=0
+declare platform="qemu"
+declare debug_build=0
+declare variant="release"
+
+while getopts "chp:vd" opt; do
+  case "${opt}" in
+    c) clean_build=1 ;;
+    h) otg-command-help ; exit 0 ;;
+    p) platform="${OPTARG}" ;;
+    v) verbose=1 ;;
+    d) debug_build=1 ; variant="debug" ;;
+    *) otg-command-help ; exit 1 ;;
+  esac
+done
+
+if [[ "${USE_CCACHE}" = "1" ]]; then
+  export CROSS_COMPILE="$(which ccache) ${TOOLCHAIN_PREFIX}"
+else
+  export CROSS_COMPILE="${TOOLCHAIN_PREFIX}"
+fi
+
+if [[ clean_build -eq 1 ]]; then
+  echo "Deleting ${OTG_ATF_OUT_DIR}..."
+  rm -rf -- "${OTG_ATF_OUT_DIR}"
+fi
+
+source "${OTG_TEE_BOOT_PARAM}"
+
+readonly ATF_IMAGE_PATH="${OTG_ATF_OUT_DIR}/${platform}/${variant}"
+readonly BL1_IMG="${ATF_IMAGE_PATH}/bl1.bin"
+readonly BL2_IMG="${ATF_IMAGE_PATH}/bl2.bin"
+readonly BL31_IMG="${ATF_IMAGE_PATH}/bl31.bin"
+readonly BL33_IMG="${OTG_UBOOT_OUT_DIR}/u-boot.bin"
+readonly FIP_IMG="${ATF_IMAGE_PATH}/fip.bin"
+
+echo "Building arm-trusted-firmware..."
+flags="BL32=${BL32_IMG} BL33=${BL33_IMG}"
+flags+=" BL32_EXTRA1=${BL32_EXTRA1_IMG} BL32_EXTRA2=${BL32_EXTRA2_IMG}"
+flags+=" PLAT=${platform} SPD=${ATF_SPD}"
+flags+=" ARM_TSP_RAM_LOCATION=tdram DEBUG=${debug_build} LOG_LEVEL=50 BL32_RAM_LOCATION=tdram"
+flags+=" BUILD_BASE=${OTG_ATF_OUT_DIR} V=${verbose}"
+
+if [[ "${TEE}" = "trusty" ]]; then
+  flags+=" TRUSTY_SPD_WITH_GENERIC_SERVICES=1"
+fi
+
+cd ${ATF_PATH}
+make -j ${jobs} -C ${ATF_PATH} ${flags} all fip
+
+mkdir -p "${OTG_IMAGES_DIR}"
+echo "Creating TEE images symbolic link to ${OTG_IMAGES_DIR}"
+rm -f ${OTG_IMAGES_DIR}/bl*.bin
+rm -f ${OTG_IMAGES_DIR}/fip.bin
+
+[[ ! -z "${BL32_IMG}" ]] && ln -sf ${BL32_IMG} ${OTG_IMAGES_DIR}/bl32.bin
+[[ ! -z "${BL32_EXTRA1_IMG}" ]] && ln -sf ${BL32_EXTRA1_IMG} ${OTG_IMAGES_DIR}/bl32_extra1.bin
+[[ ! -z "${BL32_EXTRA2_IMG}" ]] && ln -sf ${BL32_EXTRA2_IMG} ${OTG_IMAGES_DIR}/bl32_extra2.bin
+ln -s ${BL33_IMG} ${OTG_IMAGES_DIR}/bl33.bin
+ln -s ${ATF_IMAGE_PATH}/*.bin ${OTG_IMAGES_DIR}
+
+ls -l ${OTG_IMAGES_DIR}

@@ -1,0 +1,89 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build Linux rootfs
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+otg-read-config
+
+readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
+readonly LINUX_PREBUILT_DIR="${OTG_PREBUILT_BINARY_PATH}/linux"
+readonly GEN_ROOTFS_PATH="${OTG_ROOT_DIR}/gen_rootfs"
+readonly BUSYBOX_COMMON_TARGET="fvp"
+
+export PATH=${PATH}:${LINUX_PREBUILT_DIR}
+export BUSYBOX_PATH="${OTG_ROOT_DIR}/third_party/busybox"
+export ROOTFS_BUILDROOT="${OTG_REE_OUT_DIR}/build-linux-rootfs"
+export VERBOSE="${VERBOSE}"
+
+declare EXTRA_ROOTFS_FILELIST="${ROOTFS_BUILDROOT}/filelist-extra.txt"
+declare VERBOSE="${VERBOSE:-0}"
+declare CLEAN="${CLEAN:-false}"
+
+readonly TOOL_OUT_DIR="${OTG_REE_OUT_DIR}/linux_tools"
+declare extra_linux_tools="tipc-test"
+
+usage() {
+  printf '%s: [-c] [-v]\n' "$0"
+  printf '  -c            clean & build\n'
+  printf '  -v            show verbose compiling messages\n'
+}
+
+while getopts "chv" opt; do
+  case "${opt}" in
+    c) CLEAN="true" ;;
+    h) usage ; exit 0 ;;
+    v) VERBOSE="1" ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ "${USE_CCACHE}" = "1" ]]; then
+  export CROSS_COMPILE="$(which ccache) ${TOOLCHAIN_PREFIX}"
+else
+  export CROSS_COMPILE="${TOOLCHAIN_PREFIX}"
+fi
+
+cd ${GEN_ROOTFS_PATH}
+
+# Build busybox and prepare common filelist: filelist-final.txt
+if [[ "${CLEAN}" = "true" ]]; then
+  echo "Cleaning gen_rootfs build dir..."
+  rm -rf -- "${ROOTFS_BUILDROOT}"
+fi
+
+mkdir -p ${ROOTFS_BUILDROOT}
+
+TRACE=${TRACE} ./generate-cpio-rootfs.sh ${BUSYBOX_COMMON_TARGET}
+
+# prepare extra filelist
+append_to_extra_filelist() {
+  for ENTRY in "$@"; do
+    echo "${ENTRY}" >> ${EXTRA_ROOTFS_FILELIST}
+  done
+}
+
+# Generate extra tools file list
+entry=()
+for tool in "${extra_linux_tools}"; do
+  if [[ -f "${TOOL_OUT_DIR}/${tool}" ]]; then
+    entry+=("file /bin/${tool} ${TOOL_OUT_DIR}/${tool} 755 0 0")
+  fi
+done
+
+echo "# filelist-tee-common /start" > ${EXTRA_ROOTFS_FILELIST}
+append_to_extra_filelist "${entry[@]}"
+echo "# filelist-tee-common /end" >> ${EXTRA_ROOTFS_FILELIST}
+
+
+# Merge common and extra file list and generate rootfs image
+cd ${ROOTFS_BUILDROOT}
+
+cat filelist-final.txt > filelist.tmp
+cat ${EXTRA_ROOTFS_FILELIST} >> filelist.tmp
+
+${LINUX_PREBUILT_DIR}/gen_init_cpio filelist.tmp | gzip > rootfs.cpio.gz

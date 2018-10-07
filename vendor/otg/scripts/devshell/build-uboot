@@ -1,0 +1,77 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build u-boot
+
+## usage: fx vendor otg build-uboot [-c] [-v] [-p platform]
+##
+## arguments:
+##  -c              clean and build
+##  -v              show verbose compiling messages
+##  -p <platform>   select which platform to build, default: qemu_arm64
+
+set -eo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+otg-read-config
+
+readonly UBOOT_PATH="${OTG_ROOT_DIR}/u-boot"
+readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
+readonly MERGE_CONFIG="${OTG_UBOOT_OUT_DIR}/to_be_merged.conf"
+
+jobs=`getconf _NPROCESSORS_ONLN` || {
+  Cannot get number of processors
+  exit 1
+}
+
+declare verbose=0
+declare clean_build=0
+declare platform="qemu_arm64"
+
+while getopts "cp:v" opt; do
+  case "${opt}" in
+    c) clean_build=1 ;;
+    p) platform="${OPTARG}" ;;
+    v) verbose=1 ;;
+    *) otg-command-help; exit 1 ;;
+  esac
+done
+
+if [[ clean_build -eq 1 ]]; then
+  echo "Deleting ${OTG_UBOOT_OUT_DIR}"
+  rm -rf "${OTG_UBOOT_OUT_DIR}"
+fi
+
+if [[ "${USE_CCACHE}" = "1" ]]; then
+  export CROSS_COMPILE="$(which ccache) ${TOOLCHAIN_PREFIX}"
+else
+  export CROSS_COMPILE="${TOOLCHAIN_PREFIX}"
+fi
+
+echo "Building u-boot..."
+
+mkdir -p ${OTG_UBOOT_OUT_DIR}
+
+source "${OTG_REE_BOOT_PARAM}"
+
+echo > "${MERGE_CONFIG}" "\
+CONFIG_SYS_TEXT_BASE=0x60000000
+CONFIG_BOOTCOMMAND=\"fdt addr \${fdt_addr} && fdt resize 1000 && smhload kernel_img \${kernel_addr_r} && smhload initrd_img \${ramdisk_addr_r} ramdisk_addr_end &&  setenv bootargs ${KERNEL_CMDLINE} && fdt chosen \${ramdisk_addr_r} \${ramdisk_addr_end} && booti \${kernel_addr_r} - \${fdt_addr}\"
+CONFIG_SEMIHOSTING=y
+"
+
+# Create symbol link to REE boot images
+mkdir -p "${OTG_IMAGES_DIR}"
+rm -f "${OTG_IMAGES_DIR}/kernel_img"
+rm -f "${OTG_IMAGES_DIR}/initrd_img"
+ln -s ${KERNEL_IMG} ${OTG_IMAGES_DIR}/kernel_img
+ln -s ${INITRD_IMG} ${OTG_IMAGES_DIR}/initrd_img
+
+
+# Generate u-boot .config file
+cd ${UBOOT_PATH} && \
+scripts/kconfig/merge_config.sh -O ${OTG_UBOOT_OUT_DIR} ${UBOOT_PATH}/configs/${platform}_defconfig ${MERGE_CONFIG}
+
+make -j ${jobs} V=${verbose} O=${OTG_UBOOT_OUT_DIR} oldconfig all

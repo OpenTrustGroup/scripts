@@ -1,0 +1,55 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build OTG projects which are configured by `fx vendor otg set`
+
+## usage: fx vendor otg build [tee|ree|uboot|atf] [options...]
+##
+## arguments:
+##  tee             build TEE target
+##  ree             build REE target
+##  uboot           build u-boot
+##  atf             build arm-trusted-firmware
+
+set -e
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+otg-read-config
+
+function main {
+
+  if [[ $# -lt 1 ]]; then
+    otg-command-help
+    return 1
+  fi
+
+  local target="$1"
+  shift
+
+  case "${target}" in
+    tee)
+      export -f otg-save-tee-boot-param
+      export -f otg-command-run
+      "${OTG_PROJECTS_SCRIPT_PATH}/tee/${TEE}" "$@"
+      ;;
+    ree)
+      export -f otg-save-ree-boot-param
+      export -f otg-command-run
+      "${OTG_PROJECTS_SCRIPT_PATH}/ree/${REE}" "$@"
+      ;;
+    uboot)
+      otg-command-run build-uboot "$@"
+      ;;
+    atf)
+      otg-command-run build-atf "$@"
+      ;;
+    *)
+      printf "Unknown target: ${target}\n"
+      return 1
+      ;;
+  esac
+}
+
+main "$@"

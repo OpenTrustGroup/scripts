@@ -11,8 +11,8 @@
     <hook name="install-fx"
           project="scripts"
           action="devshell/lib/add_symlink_to_bin.sh"/>
-    <hook name="download-linaro-toolchain"
+    <hook name="download-toolchain"
           project="scripts"
-          action="devshell/download-linaro-toolchain"/>
+          action="vendor/otg/scripts/devshell/download-toolchain"/>
   </hooks>
 </manifest>

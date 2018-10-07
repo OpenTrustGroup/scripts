@@ -1,0 +1,21 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+set -eo pipefail
+
+if [[ "$1" == "-c" ]]; then
+  printf "Deleting ${OTG_TEE_OUT_DIR}\n"
+  rm -rf ${OTG_TEE_OUT_DIR}
+fi
+
+mkdir -p ${OTG_TEE_OUT_DIR}
+
+project="generic-arm64-test"
+otg-command-run build-trusty -p ${project}
+
+atf_spd="trusty"
+bl32_img="${OTG_TEE_OUT_DIR}/build-${project}/lk.bin"
+
+otg-save-tee-boot-param "${atf_spd}" "${bl32_img}"

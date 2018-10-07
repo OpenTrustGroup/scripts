@@ -1,0 +1,38 @@
+#!/bin/bash
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build extra linux tools
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+otg-read-config
+
+readonly TIPC_TEST_PATH="${OTG_ROOT_DIR}/third_party/tipc-test"
+readonly TOOL_OUT_DIR="${OTG_REE_OUT_DIR}/linux_tools"
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+declare CLEAN="${CLEAN:-false}"
+
+usage() {
+  printf '%s: [-c]\n' "$0"
+  printf '  -c            clean & build\n'
+}
+
+while getopts "c" opt; do
+  case "${opt}" in
+    c) CLEAN="true" ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ "${CLEAN}" = "true" ]]; then
+  echo "Deleting ${TOOL_OUT_DIR}..."
+  rm -rf "${TOOL_OUT_DIR}"
+fi
+
+mkdir -p ${TOOL_OUT_DIR}
+
+echo "Building extra tools..."
+CROSS_COMPILE="${LINARO_AARCH64_CROSS_COMPILE}" BUILD_DIR="${TOOL_OUT_DIR}" make -C ${TIPC_TEST_PATH} all
