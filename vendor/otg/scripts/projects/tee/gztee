@@ -13,6 +13,9 @@ TEE_OUT="$(basename "${OTG_TEE_OUT_DIR}")"
 FUCHSIA_BUILD_DIR="${FUCHSIA_OUT_DIR}/arm64"
 ZIRCON_BUILD_DIR="${FUCHSIA_OUT_DIR}/build-zircon/build-arm64"
 
+use_pkgfs=0  # default: bootfs
+build_opts=""
+
 if [[ "$1" == "-c" ]]; then
   printf "Deleting ${FUCHSIA_OUT_DIR}\n"
   rm -rf ${FUCHSIA_OUT_DIR}
@@ -20,16 +23,25 @@ fi
 
 mkdir -p ${FUCHSIA_OUT_DIR}
 
+if [[ ${use_pkgfs} -eq 1 ]];then
+  build_opts+=" --netboot"
+  build_opts+=" --args fvm_image_size=\"20971520\""
+  build_opts+=" --args fvm_slice_size=\"8192\""
+else
+  build_opts+=" --packages build/packages/user_bootfs"
+fi
+
+
 fx set arm64 ${FUCHSIA_BUILD_DIR} \
 --packages garnet/packages/gzos \
---packages build/packages/user_bootfs \
 --args disable_zedboot=true \
 --args kernel_cmdline_files=[\"//${TEE_OUT}/kernel_cmdline\"] \
 --args zircon_tools_dir=\"//${TEE_OUT}/build-zircon/tools\" \
 --args zircon_build_abi_dir=\"//${TEE_OUT}/build-zircon/build-arm64\" \
 --boards garnet/boards/arm64_dummy.gni \
 --zircon-arg "-o ${FUCHSIA_OUT_DIR}" \
---zircon-arg SUB_PROJECT=gzos
+--zircon-arg SUB_PROJECT=gzos \
+${build_opts}
 
 declare KERNEL_CMDLINE_FILE="${FUCHSIA_OUT_DIR}/kernel_cmdline"
 
@@ -39,6 +51,7 @@ TERM=screen-256color
 kernel.entropy-mixin=$(head -c 32 /dev/urandom | shasum -a 256 | awk '{ print $1 }')
 kernel.halt-on-panic=true
 kernel.shell=false
+kernel.sm.disable=false
 kernel.oom.enable=false
 kernel.oom.redline-mb=1
 ktrace.bufsize=1
@@ -51,7 +64,15 @@ fx build-zircon
 fx build
 
 atf_spd="trusty"
-bl32_img="${ZIRCON_BUILD_DIR}/qemu-tz-zircon.bin"
-bl32_extra1_img="${FUCHSIA_BUILD_DIR}/user.bootfs"
+bl32_img=""
+bl32_extra1_img=""
+
+if [[ ${use_pkgfs} -eq 1 ]];then
+  bl32_img="${ZIRCON_BUILD_DIR}/qemu-tz-zircon.bin" #TODO(james): use qemu-tz-boot-shim.bin
+  bl32_extra1_img="${FUCHSIA_BUILD_DIR}/netboot.zbi"
+else
+  bl32_img="${ZIRCON_BUILD_DIR}/qemu-tz-zircon.bin"
+  bl32_extra1_img="${FUCHSIA_BUILD_DIR}/user.bootfs"
+fi
 
 otg-save-tee-boot-param "${atf_spd}" "${bl32_img}" "${bl32_extra1_img}"
