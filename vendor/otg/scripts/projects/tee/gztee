@@ -21,8 +21,11 @@ fi
 mkdir -p ${FUCHSIA_OUT_DIR}
 
 fx set arm64 ${FUCHSIA_BUILD_DIR} \
+--netboot \
 --packages garnet/packages/gzos \
 --packages build/packages/user_bootfs \
+--args fvm_image_size=\"20971520\" \
+--args fvm_slice_size=\"8192\" \
 --args disable_zedboot=true \
 --args kernel_cmdline_files=[\"//${TEE_OUT}/kernel_cmdline\"] \
 --args zircon_tools_dir=\"//${TEE_OUT}/build-zircon/tools\" \
@@ -52,6 +55,6 @@ fx build
 
 atf_spd="trusty"
 bl32_img="${ZIRCON_BUILD_DIR}/qemu-tz-zircon.bin"
-bl32_extra1_img="${FUCHSIA_BUILD_DIR}/user.bootfs"
+bl32_extra1_img="${FUCHSIA_BUILD_DIR}/netboot.zbi"
 
 otg-save-tee-boot-param "${atf_spd}" "${bl32_img}" "${bl32_extra1_img}"
