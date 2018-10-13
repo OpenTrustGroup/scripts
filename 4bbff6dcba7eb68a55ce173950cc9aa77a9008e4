@@ -22,6 +22,30 @@
       "revId": "4bbff6dcba7eb68a55ce173950cc9aa77a9008e4",
       "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
       "unresolved": true
+    },
+    {
+      "key": {
+        "uuid": "31173fc5_23c8f86d",
+        "filename": "vendor/otg/scripts/projects/tee/gztee",
+        "patchSetId": 2
+      },
+      "lineNbr": 27,
+      "author": {
+        "id": 1013117
+      },
+      "writtenOn": "2018-10-13T14:42:10Z",
+      "side": 1,
+      "message": "It depends on the size of blob.blk (currently 18MB including pkgsvr)",
+      "parentUuid": "cb2b80c8_5f12781a",
+      "range": {
+        "startLine": 27,
+        "startChar": 0,
+        "endLine": 27,
+        "endChar": 36
+      },
+      "revId": "4bbff6dcba7eb68a55ce173950cc9aa77a9008e4",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": true
     }
   ]
 }
