@@ -1,0 +1,27 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "1daa6ba2_2b59d8e8",
+        "filename": "vendor/otg/scripts/projects/tee/gztee",
+        "patchSetId": 5
+      },
+      "lineNbr": 71,
+      "author": {
+        "id": 1013117
+      },
+      "writtenOn": "2018-10-14T08:56:11Z",
+      "side": 1,
+      "message": "can move outside of the if statement",
+      "range": {
+        "startLine": 71,
+        "startChar": 2,
+        "endLine": 71,
+        "endChar": 51
+      },
+      "revId": "8e7972902b737072a27b3ba086ed142a9e3b4a16",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": true
+    }
+  ]
+}
