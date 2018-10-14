@@ -2,7 +2,15 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-export OTG_ROOT_DIR="${FUCHSIA_DIR}"
+if [[ -n "${ZSH_VERSION}" ]]; then
+  devshell_lib_dir=${${(%):-%x}:a:h}
+else
+  devshell_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+export OTG_ROOT_DIR="$(dirname $(dirname $(dirname $(dirname $(dirname $(dirname "${devshell_lib_dir}"))))))"
+unset devshell_lib_dir
+
 export OTG_TOOLCHAIN_CONFIG="${OTG_ROOT_DIR}/.otg-toolchain-config"
 export OTG_CONFIG="${OTG_ROOT_DIR}/.otg-config"
 export OTG_VENDOR_PATH="${OTG_ROOT_DIR}/scripts/vendor/otg"
