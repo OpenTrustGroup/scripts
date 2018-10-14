@@ -22,6 +22,30 @@
       "revId": "8e7972902b737072a27b3ba086ed142a9e3b4a16",
       "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
       "unresolved": true
+    },
+    {
+      "key": {
+        "uuid": "b166bba9_6768348a",
+        "filename": "vendor/otg/scripts/projects/tee/gztee",
+        "patchSetId": 5
+      },
+      "lineNbr": 71,
+      "author": {
+        "id": 1012985
+      },
+      "writtenOn": "2018-10-14T13:10:53Z",
+      "side": 1,
+      "message": "we can use qemu-tz-boot-shim.bin to boot system, but it looks like still have problems. will leave a TODO here.",
+      "parentUuid": "1daa6ba2_2b59d8e8",
+      "range": {
+        "startLine": 71,
+        "startChar": 2,
+        "endLine": 71,
+        "endChar": 51
+      },
+      "revId": "8e7972902b737072a27b3ba086ed142a9e3b4a16",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
     }
   ]
 }
