@@ -8,10 +8,8 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 otg-read-config
 
-readonly TRUSTY_PATH="${OTG_ROOT_DIR}/trusty"
+readonly TRUSTY_PATH="${OTG_ROOT_DIR}/trusty_repos"
 readonly TRUSTY_BUILDROOT="${OTG_TEE_OUT_DIR}"
-readonly TRUSTY_ARM64_TOOLCHAIN_PATH="${TRUSTY_PATH}/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.8"
-readonly TRUSTY_ARM32_TOOLCHAIN_PATH="${TRUSTY_PATH}/prebuilts/gcc/linux-x86/arm/arm-eabi-4.8"
 
 JOBS=`getconf _NPROCESSORS_ONLN` || {
   Cannot get number of processors
@@ -21,11 +19,10 @@ JOBS=`getconf _NPROCESSORS_ONLN` || {
 set -eo pipefail; [[ "${TRACE}" ]] && set -x
 
 
-declare VERBOSE="${VERBOSE:-0}"
-declare CLEAN="${CLEAN:-false}"
-declare PROJECT="${TRUSTY_PROJECT:-generic-arm64-test}"
+declare VERBOSE=0
+declare CLEAN_BUILD=0
+declare PROJECT="generic-arm64-test"
 declare NOECHO="@"
-declare TRUSTY_FLAGS=""
 
 usage() {
   printf '%s: [-c] [-v] [-l] [-p project]\n' "$0"
@@ -37,10 +34,10 @@ usage() {
 
 while getopts "chp:vl" opt; do
   case "${opt}" in
-    c) CLEAN="true" ;;
+    c) CLEAN_BUILD=1 ;;
     h) usage ; exit 0 ;;
     p) PROJECT="${OPTARG}" ;;
-    v) VERBOSE="1" ;;
+    v) VERBOSE=1 ;;
     l) cd ${TRUSTY_PATH} ; make list ; exit 0 ;;
     *) usage 1>&2 ; exit 1 ;;
   esac
@@ -50,26 +47,31 @@ if [[ "${USE_CCACHE}" = "1" ]]; then
   export CCACHE="$(which ccache)"
 fi
 
-if [[ "${VERBOSE}" = "1" ]]; then
+if [[ ${VERBOSE} -eq 1 ]]; then
   NOECHO=""
+fi
+
+# Download source code if not existed
+if [[ ! -d "${TRUSTY_PATH}" ]]; then
+  mkdir -p ${TRUSTY_PATH}
+  cd ${TRUSTY_PATH}
+  repo init -u https://android.googlesource.com/trusty/manifest.git
+  repo sync -c --no-tags --no-clone-bundle -j${JOBS}
 fi
 
 # Trusty makefile can auto probe toolchain path by 'which xxx' shell command
 export PATH=${TRUSTY_ARM64_TOOLCHAIN_PATH}/bin:${TRUSTY_ARM32_TOOLCHAIN_PATH}/bin:${PATH}
 
-if [[ "${CLEAN}" = "true" ]]; then
-  echo "Cleaning trusty..."
+if [[ ${CLEAN_BUILD} -eq 1 ]]; then
+  echo "Deleting ${TRUSTY_BUILDROOT}..."
   rm -rf -- "${TRUSTY_BUILDROOT}"
 fi
 
-echo "Installing Trusty makefiles..."
-cp ${TRUSTY_PATH}/external/lk/makefile ${TRUSTY_PATH}
-cp ${TRUSTY_PATH}/vendor/google/aosp/lk_inc.mk ${TRUSTY_PATH}
-
 echo "Building trusty..."
 cd ${TRUSTY_PATH}
+source trusty/vendor/google/aosp/scripts/envsetup.sh
+
 BUILDROOT=${TRUSTY_BUILDROOT} \
 DEFAULT_PROJECT=${PROJECT} \
 NOECHO=${NOECHO} \
-CLANGBUILD=false \
-make -j ${JOBS} ${TRUSTY_FLAGS} all
+make -j${JOBS} all

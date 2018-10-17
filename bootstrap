@@ -8,9 +8,9 @@ set -e
 
 function usage {
   cat <<END
-usage: bootstrap [gzos|trusty] [dev|stable]
+usage: bootstrap gzos [stable|dev]
 
-Bootstrap a TEE development environment. Default: gzos
+Bootstrap a TEE development environment.
 END
 }
 
@@ -39,18 +39,13 @@ if [[ "${tee}" == "gzos" ]]; then
     manifest_url="https://review.gerrithub.io/OpenTrustGroup/manifest"
     manifest_branch="gzos"
   fi
-elif [[ "${tee}" == "trusty" ]]; then
-  manifest_name="manifest"
-  manifest_file="trusty"
-  manifest_url="https://review.gerrithub.io/OpenTrustGroup/manifest"
-  manifest_branch="gzos"
 else
   usage
   exit 1
 fi
 
 # The fetched script will
-# - create "fuchsia" directory if it does not exist,
+# - create "<tee>_<version>" directory if it does not exist,
 # - download "jiri" command to "fuchsia/.jiri_root/bin"
 curl -s "https://fuchsia.googlesource.com/jiri/+/master/scripts/bootstrap_jiri?format=TEXT" | base64 --decode | bash -s "${tee}_${version}"
 cd "${tee}_${version}"

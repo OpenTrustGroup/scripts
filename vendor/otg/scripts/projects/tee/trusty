@@ -12,7 +12,7 @@ fi
 
 mkdir -p ${OTG_TEE_OUT_DIR}
 
-project="generic-arm64-test"
+project="generic-arm64-test" # use "generic-arm32-test" for trusty arm32 version
 otg-command-run build-trusty -p ${project}
 
 atf_spd="trusty"
