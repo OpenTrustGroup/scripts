@@ -22,9 +22,11 @@ mkdir -p ${FUCHSIA_OUT_DIR}
 fx set arm64 ${FUCHSIA_BUILD_DIR} \
 --products garnet/products/devtools \
 --netboot \
+--args disable_zedboot=true \
 --args zircon_tools_dir=\"//${REE_OUT}/build-zircon/tools\" \
 --args zircon_build_abi_dir=\"//${REE_OUT}/build-zircon/build-arm64\" \
---zircon-arg "-o ${FUCHSIA_OUT_DIR}"
+--zircon-arg "-o ${FUCHSIA_OUT_DIR}" \
+--zircon-arg SUB_PROJECT=gzos_ree \
 
 fx build-zircon
 fx build
