@@ -58,6 +58,7 @@ source "${OTG_REE_BOOT_PARAM}"
 
 echo > "${MERGE_CONFIG}" "\
 CONFIG_SYS_TEXT_BASE=0x60000000
+CONFIG_BOOTDELAY=0
 CONFIG_BOOTCOMMAND=\"fdt addr \${fdt_addr} && fdt resize 1000 && smhload kernel_img \${kernel_addr_r} && smhload initrd_img \${ramdisk_addr_r} ramdisk_addr_end &&  setenv bootargs ${KERNEL_CMDLINE} && fdt chosen \${ramdisk_addr_r} \${ramdisk_addr_end} && booti \${kernel_addr_r} - \${fdt_addr}\"
 CONFIG_SEMIHOSTING=y
 "
