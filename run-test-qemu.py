@@ -413,7 +413,7 @@ class Gztee(OsTest):
     prompt_str = '$ '
     test_commands = [
         TestCommand('k sm disable', parser=None),
-        TestCommand('killall rpc_agent', parser=None),
+        TestCommand('killall rpc_server', parser=None),
         TestCommand('/system/test/sys/smc-test', parser=ZirconRunTestParser),
         TestCommand('/system/test/gzos_lib_unittests', parser=GoogleTestParser),
         TestCommand('/system/test/rpc_agent_unittests', parser=GoogleTestParser),

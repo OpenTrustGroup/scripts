@@ -33,7 +33,7 @@ fi
 
 
 fx set arm64 ${FUCHSIA_BUILD_DIR} \
---packages garnet/packages/gzos \
+--packages garnet/packages/gzos_tee \
 --args disable_zedboot=true \
 --args kernel_cmdline_files=[\"//${TEE_OUT}/kernel_cmdline\"] \
 --args zircon_tools_dir=\"//${TEE_OUT}/build-zircon/tools\" \
