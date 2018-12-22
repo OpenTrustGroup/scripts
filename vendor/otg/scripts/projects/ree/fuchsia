@@ -28,7 +28,7 @@ fx set arm64 ${FUCHSIA_BUILD_DIR} \
 --zircon-arg "-o ${FUCHSIA_OUT_DIR}" \
 --zircon-arg SUB_PROJECT=gzos_ree \
 
-fx build-zircon
+fx build-zircon USE_CLANG=true
 fx build
 
 source "${FUCHSIA_BUILD_DIR}"/image_paths.sh
