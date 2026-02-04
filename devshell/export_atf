@@ -1,0 +1,60 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### Export ATF
+### Use White List for prevending that wrong folder is exported.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly ATF_PATH="${FUCHSIA_DIR}/arm-trusted-firmware"
+readonly ATF_SPD_DIR="${ATF_PATH}/services/spd/nebula"
+
+declare ATF_OUT_DIR=""
+
+function usage()
+{
+  printf '%s: [-h] [-o]\n' "$0"
+  printf '  -h        show help\n'
+  printf '  -o [path] atf output folder\n'
+}
+
+while getopts "ho:" opt; do
+  case "${opt}" in
+    h) usage ; exit 0 ;;
+    o) ATF_OUT_DIR=${OPTARG} ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ -z "${ATF_OUT_DIR}" ]]; then
+  echo "Please set output folder by option \"-o\"."
+  exit 1
+fi
+mkdir -p ${ATF_OUT_DIR}
+
+# $1: source directory/file
+# $2: target directory/file
+function copy_source {
+  if [[ $# -ne 2 ]]; then
+    echo "invalid parameters"
+    exit 1
+  fi
+
+  if [[ -d "${1}" ]]; then
+    rsync -a --exclude .git/ "${1}" "${2}"
+  else
+    cp -f "${1}" "${2}"
+  fi
+
+  if [[ $? -ne 0 ]]; then
+    echo "failed! (exit code $?)"
+  fi
+}
+
+copy_source ${ATF_SPD_DIR} ${ATF_OUT_DIR}/

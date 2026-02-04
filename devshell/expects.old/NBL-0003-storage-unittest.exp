@@ -1,0 +1,32 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # install exe into HEE
+    set ha_id 1c1c3151-f04f-4012-bfd7-59ab76bc7912
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e storage-unittest -a $env(FUCHSIA_IP) -i $ha_id"
+    # set the run command in HEE.
+    set cmd "nbl_daemon -l $ha_id"
+} else {
+    set cmd "nblruncmd /system/test/storage/storage-unittest"
+}
+send -i $ree "$cmd\r"
+# Example: The first line is in testcase, the second line is end of all tests whether or not success or failed.
+# ss_unittest: 328: test_CreateDelete: FAILED
+# ss_unittest: 2743: SS-unittest: complete!$
+set timeout 600
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    "*: FAILED" {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "SS-unittest: complete!"
+}

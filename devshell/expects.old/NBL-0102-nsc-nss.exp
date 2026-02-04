@@ -1,0 +1,43 @@
+# Test NSC (non-secure call), source is in "//third_party/hee-trusty/nbl_nsc".
+if { "$env(USE_RELEASE)" == "true" } {
+    # install exe into HEE
+    set ha_id a7122a23-21f7-4aaa-a2c8-4965afcb6c4b
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e test_nss -a $env(FUCHSIA_IP) -i $ha_id"
+    # set the run command in HEE.
+    set cmd "nbl_daemon -l $ha_id -a --gtest_filter=-NSSProcessTest.ReadWriteInMultipleProcess"
+} else {
+    set cmd "nblruncmd /system/test/nsc/test_nss"
+}
+send -i $ree "$cmd\r"
+# Example:
+### Failed case.
+# [  FAILED  ] TestNSSNormalTest/NSSNormalTest.RandomWrite/3, where GetParam() = 2 (18 ms)
+# [  PASSED  ] 49 tests.
+# [  FAILED  ] 4 tests, listed below:
+# [  FAILED  ] TestNSSNormalTest/NSSNormalTest.RandomWrite/0, where GetParam() = -1
+# [  FAILED  ] TestNSSNormalTest/NSSNormalTest.RandomWrite/1, where GetParam() = 0
+# [  FAILED  ] TestNSSNormalTest/NSSNormalTest.RandomWrite/2, where GetParam() = 1
+# [  FAILED  ] TestNSSNormalTest/NSSNormalTest.RandomWrite/3, where GetParam() = 2
+#  4 FAILED TESTS
+### Success case.
+# [  PASSED  ] 53 tests.
+### So it's NOT easy to distinguish clearly, so I add some message at end of app.
+set timeout 120
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    "ALL TESTS FAILED." {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "ALL TESTS SUCCEEDED."
+}

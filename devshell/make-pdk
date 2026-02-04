@@ -1,0 +1,248 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### generate Nebula PDK for third-party developers.
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+
+declare project_root=${FUCHSIA_DIR}
+declare pdk_root=""
+declare wipe_out_kernel="true"
+
+function usage {
+  cat << END
+
+usage: fx $(basename ${0}) <options>
+
+Options:
+  -o: PDK output folder
+  -k: keep zircon kernel source in PDK
+  -r: remove boot-shim and binaries under out/arm64 by keyword ex: mtkv8 qcomv8
+      example:   -r mtkv8
+                 -r "mtkv8 qcomv8"
+
+  -h: Print this usage message.
+
+END
+}
+
+while getopts "kp:o:r:" opt; do
+  case "${opt}" in
+    k) wipe_out_kernel="false" ;;
+    o) pdk_root="${OPTARG}" ;;
+    r) remove_boards="${OPTARG}" ;;
+    h) usage ; exit 0 ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+shift $(($OPTIND - 1))
+
+if [[ -z ${pdk_root} ]]; then
+    usage
+    echo PDK output folder is not set
+    exit 1
+fi
+
+if [[ -z $project_root ]]; then
+    echo project_root is not set
+    exit 1
+fi
+
+function copy_dir {
+    echo -n "${1} "
+
+    if [[ $# -ne 3 ]]; then
+        echo "invalid parameters"
+        exit 1
+    fi
+
+    if [[ -d "${2}" ]]; then
+        rsync -a --exclude .git/ "${2}" "${3}"
+    else
+        cp -f "${2}" "${3}"
+    fi
+
+    if [[ $? -ne 0 ]]; then
+        echo "failed! (exit code $?)"
+    else
+        echo "done"
+    fi
+}
+
+function copy-system-manifest {
+    local project_arm64_out_dir=${project_root}/out/arm64
+    local target_arm64_out_dir=${pdk_root}/out/arm64
+
+    pushd ${target_arm64_out_dir} > /dev/null
+    echo -n "Copying system manifest files..."
+
+    while IFS=\= read userfs_path build_path; do
+        mkdir -p ${target_arm64_out_dir}/$(dirname ${build_path})
+        cp -f ${project_arm64_out_dir}/${build_path} ${target_arm64_out_dir}/${build_path}
+    done < ${1}
+
+    echo "Done"
+
+    popd > /dev/null
+}
+
+function copy-manifests {
+  local project_arm64_out_dir=${project_root}/out/arm64
+  local target_arm64_out_dir=${pdk_root}/out/arm64
+  local product=${1}
+  local dot_product=""
+  local rel=""
+
+  if [[ ! -z ${1} ]]; then
+    dot_product=".${product}"
+    rel="-rel"
+    cp -f ${project_arm64_out_dir}/bootdata-plid-${product}.bin ${target_arm64_out_dir}
+    cp -f ${project_arm64_out_dir}/bootdata-plid-${product}${rel}.bin ${target_arm64_out_dir}
+  else
+    rel=".rel"
+    cp -f ${project_arm64_out_dir}/cmdline.bin ${target_arm64_out_dir}
+    cp -f ${project_arm64_out_dir}/cmdline${rel}.bin ${target_arm64_out_dir}
+  fi
+
+  cp -f ${project_arm64_out_dir}/boot.manifest${dot_product} ${target_arm64_out_dir}
+  cp -f ${project_arm64_out_dir}/boot.manifest${dot_product}${rel} ${target_arm64_out_dir}
+  cp -f ${project_arm64_out_dir}/system.manifest${dot_product} ${target_arm64_out_dir}
+  cp -f ${project_arm64_out_dir}/system.manifest${dot_product}${rel} ${target_arm64_out_dir}
+}
+
+echo "======================="
+echo "Generate the Nebula PDK"
+echo "======================="
+
+mkdir -p ${pdk_root}/
+copy_dir "Copying scripts..." $project_root/scripts ${pdk_root}/
+copy_dir "Copying zircon source..." $project_root/zircon ${pdk_root}/
+
+mkdir -p ${pdk_root}/out/arm64/
+copy-manifests
+copy-manifests mtkv8-p60
+copy-manifests mtkv8-begonia
+
+mkdir -p ${pdk_root}/out/build-zircon/
+copy_dir "Copying zircon out folder..." $project_root/out/build-zircon/ ${pdk_root}/out/build-zircon/
+
+mkdir -p ${pdk_root}/out/build-zircon-release/
+copy_dir "Copying zircon release out folder..." $project_root/out/build-zircon-release/ ${pdk_root}/out/build-zircon-release/
+
+#copy_dir "Copying zircon out folder..." $project_root/out/ ${pdk_root}/out/
+
+mkdir -p ${pdk_root}/.jiri_root
+copy_dir "Copying .jiri_root..." $project_root/.jiri_root/bin ${pdk_root}/.jiri_root/
+copy_dir "Copying .config folder..." $project_root/.config ${pdk_root}/
+
+mkdir -p ${pdk_root}/build/grt/mtkv8/
+copy_dir "Copying sign script folder..." $project_root/build/grt/mtkv8/ ${pdk_root}/build/grt/mtkv8/
+
+mkdir -p ${pdk_root}/third_party/hee-trusty/nbl_license_srv/
+copy_dir "Copying command.h..." $project_root/third_party/hee-trusty/nbl_license_srv/command.h ${pdk_root}/third_party/hee-trusty/nbl_license_srv/
+
+cd ${pdk_root}/zircon/make
+
+# Generate pb_module.mk
+sed 's/\smake\/compile.mk/ make\/pb_compile.mk/g' module.mk > pb_module.mk
+
+# Generate no_compile.mk
+sed '/^\$(MODULE_COBJS): \$(/,/GENERATED /d' compile.mk > pb_compile.mk
+
+#
+# Wipe out Kernel source
+#
+if [[ ${wipe_out_kernel} = "true" ]]; then
+  cd ${pdk_root}/zircon/kernel
+  # Remove all cpp/c/S files except target/arm64 (keep boot-shim source code)
+  find -name "*.cpp" -o -name "*.c" -o -name "*.S" | xargs rm -f
+  # Patch all rules.mk, rename the module.mk to pb_module.mk
+  find -name "rules.mk" -exec sed -i 's/^include\s\+make\/module.mk/include make\/pb_module.mk/g' {} \;
+fi
+
+#
+# Wipe out Trusty source
+#
+cd ${pdk_root}/zircon/trusty/lk
+find -name "*.cpp" -o -name "*.c" -o -name "*.S" | xargs rm -f
+find -name "rules.mk" -exec sed -i 's/^include\s\+make\/module.mk/include make\/pb_module.mk/g' {} \;
+
+#
+# Wipe out images and boot-shim
+#
+for remove_keyword in $remove_boards
+do
+  cd ${pdk_root}/zircon/kernel/target/arm64/board
+  find -type d -name "*${remove_keyword}*" | xargs rm -fr
+  cd ${pdk_root}/out
+  find -type f -name "*${remove_keyword}*.bin" | xargs rm -f
+done
+
+
+# Remove dependency generation files
+cd ${pdk_root}/out/build-zircon
+#find -name "*.d" -o -name "*.mod.o" -o -name "*.opts" | xargs rm -f
+grep -I -l $project_root * -r | xargs rm -f
+
+# Remove dependency generation files
+cd ${pdk_root}/out/build-zircon-release
+grep -I -l $project_root * -r | xargs rm -f
+
+# Remove git temp files
+cd ${pdk_root}
+find -name "*.orig" | xargs rm -f
+
+# Remove expects and remove all fx commands except required scripts
+cd ${pdk_root}/scripts/devshell
+rm -fr expects
+find -maxdepth 1 -name "*" -type f | grep -v build-zircon-hee | grep -v build-user-bootfs | grep -v sign-image | xargs rm -f
+
+# Detect gcc version of MTK build server and then remove -lc++abi in build-zircon-hee
+# This is a temporary change for build error on MTK server
+sed -i '/fx-config-read/a\\nexport gcc_version=$(gcc -dumpversion)\
+echo "gcc version of this pc is $gcc_version"\
+if [ $gcc_version = 4.8 ]; then\
+ find . -name engine.mk -exec sed -i "s/-lc++abi//g" {} \\;\
+fi\
+pushd $FUCHSIA_OUT_DIR/build-zircon > /dev/null\
+grep -I -l $PWD * -r | xargs rm -f\
+popd > /dev/null
+' build-zircon-hee
+
+copy-system-manifest system.manifest
+copy-system-manifest system.manifest.rel
+
+cat > clean-partial << EOF
+#!/bin/bash
+
+### Partial clean
+
+set -e
+
+source "\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+
+cd \${FUCHSIA_OUT_DIR}
+grep -I -l \$PWD * -r | xargs rm -f
+EOF
+chmod +x clean-partial
+
+echo "=============================="
+echo "Verify PDK - PDK build test..."
+echo "=============================="
+cd ${pdk_root}/
+find ./ -name "*" | xargs touch
+env -i ./scripts/fx build-zircon-hee
+
+echo "================================="
+echo "Verify PDK - PDK built passed !!!"
+echo "================================="
+
+# Remove dependency generation files
+cd ${pdk_root}/out/build-zircon
+grep -I -l ${pdk_root} * -r | xargs rm -f

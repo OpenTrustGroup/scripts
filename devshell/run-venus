@@ -1,0 +1,467 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### start HEE/TEE/REE in qemu
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/expects.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -eE; [[ "${TRACE}" ]] && set -x; [[ "${TRACE_EXP}" ]] && EXPECT_OPT="-d"
+
+if [[ -d "${THIRD_PARTY_QEMU_BIN}" ]]; then
+  qemu_dir="${THIRD_PARTY_QEMU_BIN}"
+else
+  qemu_dir="${BUILDTOOLS_QEMU_DIR}/bin"
+fi
+
+# NOTE(GR-0002): Use bootfs(deprecated) instead of fvm.
+# Leave them commented instead of deleting them in case.
+## Construction of a qcow image prevents qemu from writing back to the
+## build-produced image file, which could cause timestamp issues with that file.
+#qcowdir="$(mktemp -d)"
+#if [[ ! -d "${qcowdir}" ]]; then
+#  echo >&2 "Failed to create temporary directory"
+#  exit 1
+#fi
+#qimg="${qcowdir}/fuchsia.qcow2"
+#trap 'rm "${qimg}" && rmdir "${qcowdir}"' EXIT
+#
+#"${qemu_dir}/qemu-img" create -f qcow2 -b "${FUCHSIA_BUILD_DIR}/${fvm_block}" \
+#  "${qimg}"
+
+readonly ATF_BUILDROOT="${FUCHSIA_OUT_DIR}/build-atf"
+readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
+readonly ROOTFS_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux-rootfs"
+readonly SOC_TERM_BIN="${BAZEL_HOST_OUT}/soc_term"
+readonly gnome_terminal="$(command -v gnome-terminal 2>/dev/null)"
+readonly xterm="$(command -v xterm 2>/dev/null)"
+readonly NBL_SDK_PATH="${FUCHSIA_OUT_DIR}/arm64/sdks/nebula"
+readonly QEMU_LINUX_CONFIG="${FUCHSIA_OUT_DIR}/build-linux/.config"
+readonly AOSP_PREBUILTS="${FUCHSIA_DIR}/prebuilts/aosp"
+readonly ANDROID_PREBUILT_IMAGES="${AOSP_PREBUILTS}/android/out/target/product/trusty"
+readonly QEMU_ANDROID_IMAGES="${FUCHSIA_OUT_DIR}/android_images"
+
+readonly DTB_FILE="${FUCHSIA_DIR}/qemu-virt.dtb"
+readonly DTS_FILE="${FUCHSIA_DIR}/qemu-virt.dts"
+
+declare DUMP_DEVICE_TREE="false"
+# NOTE(GR-0002): Use bootfs(deprecated) instead of fvm.
+# Leave them commented instead of deleting them in case.
+#declare QEMU_INITRD_ARGS="${FUCHSIA_BUILD_DIR}/bootdata-blob-qemu.bin"
+#declare QEMU_FUCHSIA_ARGS="-drive file=${qimg},format=qcow2,if=none,id=mydisk -device ich9-ahci,id=ahci -device ide-drive,drive=mydisk,bus=ahci.0"
+declare QEMU_INITRD_ARGS="${FUCHSIA_BUILD_DIR}/user.bootfs-qemu"
+declare QEMU_FUCHSIA_ARGS=""
+declare QEMU_RUN_CHECK=""
+declare DUMP_LOGS_ON_ERROR="false"
+declare QEMU_DEBUG_FLAGS="-s -S" # -s: -gdb tcp::1234, -S: freeze CPU at startup
+declare QEMU_VIRTIO_NET_FLAGS="-net none"
+declare QEMU_VIRTIO_NET_ENABLE="false"
+declare QEMU_VIRTIO_NET_INTERFACES=()
+declare QEMU_VIRTIO_V9FS_FLAGS=""
+declare QEMU_VIRTIO_PCI_FLAGS=""
+declare QEMU_DISK_FLAGS=""
+declare QEMU_SCSI_IMAGE=""
+declare QEMU_HEE_PORT="54320"
+declare QEMU_TEE_PORT="54321"
+declare QEMU_REE_PORT="54322"
+declare QEMU_SERIAL_FLAGS="-serial tcp:localhost:54320 -serial tcp:localhost:54321 -serial tcp:localhost:54322"
+declare QEMU_EXTRA_ARGS="-semihosting-config enable=on,target=native -d unimp -machine acpi=off -vga none -serial mon:stdio "
+declare QEMU_HEE_RAM="1024"
+declare QEMU_REE1_RAM="1536" # Linux Kernel
+declare QEMU_REE2_RAM="128"   # Linux Rootfs
+declare QEMU_ION_RAM="129"    # Reserved memory for ION heap
+declare QEMU_TEE_RAM="448"
+declare QEMU_CPU_NUM="4"
+declare QEMU_GIC_VERSION="3"
+declare QEMU_OKL_HYP="off"
+declare QEMU_ACTIVE_HYP="off"
+declare QEMU_OKL_HYP_REE_CPU_NUM="2"
+declare QEMU_TRUSTY_SCHED_POLICY="false"
+declare QEMU_TEE_SYSTEM_MODE="0"	# 0: 3 systems (tee,hee,ree)  1: 2 systems (tee,ree)
+declare EXPECT_SCRIPT=""
+declare EXPECT_CPIDS=()
+declare EXPECT_JOBS="1"
+# - start QEMU with release version.
+export USE_RELEASE="false"
+declare QEMU_ZIRCON_KERNEL_PATH="${FUCHSIA_DIR}/out/venus-hee/arm64/bootdata-combo-qemu-virt.bin"
+declare QEMU_TEE_KERNEL_PATH="${FUCHSIA_DIR}/out/venus-tee/arm64/bootdata-combo-qemu-virt.bin"
+declare QEMU_OPTEE_KERNEL_PATH="${FUCHSIA_DIR}/prebuilts/optee/tee-pager_v2.bin"
+declare QEMU_VMID="1"
+declare CPU_MODEL="cortex-a53"
+declare BOOT_ANDROID="false"
+
+#QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -d guest_errors" # Show error messages when accessing registers
+
+CMDLINE=""
+
+# Add entropy to the kernel
+CMDLINE+="kernel.entropy-mixin=$(head -c 32 /dev/urandom | shasum -a 256 | awk '{ print $1 }') "
+
+# Don't 'reboot' the emulator if the kernel crashes
+CMDLINE+="kernel.halt-on-panic=true "
+
+# Remove/Disable unneeded functions
+CMDLINE+="virtcon.disable=true  "
+#CMDLINE+="netsvc.disable=true  "
+CMDLINE+="ktrace.bufsize=32  "
+CMDLINE+="kernel.oom.enable=false  "
+CMDLINE+="earlycon=pl011,0x09001000 console=ttyAMA0  "
+CMDLINE+="fbcon=map:2 " # Disable Linux Framebuffer
+
+usage() {
+  printf '%s: [-c] [-d] [-t]\n' "$0"
+  printf '  -a            disable ASLR\n'
+  printf '  -c {all|xxx.exp}\n'
+  printf '                all: run HEE/REE tests under devshell/expects/\n'
+  printf '                xxx.exp: run specific test under devshell/expects/, ex. HEE-0001-k-ut-all.exp\n'
+  printf '                HEE-BOOT.exp and REE-BOOT.exp are special checkers for bootup and should not be\n'
+  printf '                run separately\n'
+  printf '  -C {ree_cpu_num}, only work if combined with -y.\n'
+  printf '                if ree_cpu_num = 0: used to simulate hee only.\n'
+  printf '                if ree_cpu_num > 0: used to simulate hee/ree.\n'
+  printf '  -c {world}:cmd:[timeout]:[loopcount]\n'
+  printf '                world: mandatory, "hee" or "ree"\n'
+  printf '                cmd: mandatory, specific command to run in hee/ree. ex: ls -al\n'
+  printf '                timeout: optional, specific timeout of cmd. -1 means no timeout\n'
+  printf '                    run hee/ree cmd on QEMU with optional timeout. ex. -r "ree:ls -al:10"\n'
+  printf '                loopcount: optional, specific loopcount of cmd.\n'
+  printf '                run hee/ree cmd on QEMU with optional timeout. ex. -r "ree:ls -all:10"\n'
+  printf '  -d            dump QEMU HEE/REE/TEE logs on errors (ONLY works with -c)\n'
+  printf '  -e            tee only. (running with 2 systems (tee and ree)\n'
+  printf '  -i {image path} specify an image to be attached as SCSI disk\n'
+  printf '  -m            enable QEMU host file-sharing via 9p.\n'
+  printf '  -n            enable QEMU networking via tun/tap.\n'
+  printf '  -o            configure HEE RAM in MBs. (default: '${QEMU_HEE_RAM}' MiB)\n'
+  printf '  -p            configure REE RAM in MBs. (default: '${QEMU_REE1_RAM}' MiB)\n'
+  printf '  -q            configure TEE RAM in MBs. (default: '${QEMU_TEE_RAM}' MiB)\n'
+  printf '  -r            run QEMU with bootdata-combo-qemu-virt-rel.bin\n'
+  printf '  -t            dump QEMU device tree (dtb, dts) to %s\n' ${FUCHSIA_DIR}
+  printf '  -T            run QEMU with trusty schedule policy\n'
+  printf '  -x            output QEMU serial logs to TMUX instead of gnome-terminal/xterm\n'
+  printf '  -y            run QEMU with okl-hyp simulation enabled.\n'
+  printf '  -z            run QEMU with active hyp simulation enabled.\n'
+  printf '  -h            show help\n'
+  printf '  -9            QEMU emulate ARMv9 cpu cortex-a710 (default: '${CPU_MODEL}')\n'
+  printf '  -u            booting Android system (if A-HYP mode, SOS will be Android)\n'
+}
+
+while getopts "ac:C:deg:i:j:m:no:p:q:rs:tT9xyzu" opt; do
+  case "${opt}" in
+    a)
+      CMDLINE+="aslr.disable=true "
+      ;;
+    c)
+      QEMU_RUN_CHECK="${OPTARG}"
+      QEMU_DEBUG_FLAGS=""
+      rm -rf ${FUCHSIA_OUT_DIR}/testfile
+      ;;
+    C)
+      [[ "OPTARG" -le "3" ]] && QEMU_OKL_HYP_REE_CPU_NUM="${OPTARG}"
+      ;;
+    d)
+      DUMP_LOGS_ON_ERROR="true"
+      ;;
+    e)
+      QEMU_TEE_SYSTEM_MODE="1"
+      QEMU_VMID="0"
+      ;;
+    g)
+      QEMU_GIC_VERSION="${OPTARG}"
+      ;;
+    i)
+      QEMU_SCSI_IMAGE="${OPTARG}"
+      ;;
+    j)
+      [[ "OPTARG" -gt "${EXPECT_JOBS}" ]] && EXPECT_JOBS="${OPTARG}"
+      ;;
+    n)
+      QEMU_VIRTIO_NET_ENABLE="true"
+      ;;
+    m)
+      QEMU_VIRTIO_V9FS_FLAGS=" -fsdev local,security_model=none,id=fsdev0,path=${OPTARG} -device virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=hostshare,vmid=${QEMU_VMID}"
+      ;;
+    o)
+      QEMU_HEE_RAM="${OPTARG}"
+      ;;
+    p)
+      QEMU_REE1_RAM="${OPTARG}"
+      ;;
+    q)
+      QEMU_TEE_RAM="${OPTARG}"
+      ;;
+    r)
+      export USE_RELEASE="true"
+      QEMU_ZIRCON_KERNEL_PATH="${FUCHSIA_DIR}/out/venus-hee/arm64/bootdata-combo-qemu-virt-rel.bin"
+      QEMU_TEE_KERNEL_PATH="${FUCHSIA_DIR}/out/venus-tee/arm64/bootdata-combo-qemu-virt-rel.bin"
+      ;;
+    s)
+      QEMU_CPU_NUM="${OPTARG}"
+      ;;
+    t)
+      DUMP_DEVICE_TREE="true"
+      QEMU_SERIAL_FLAGS=""
+      QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -machine dumpdtb=${DTB_FILE} "
+      ;;
+    T)
+      QEMU_TRUSTY_SCHED_POLICY="true"
+      ;;
+    9)
+      CPU_MODEL="cortex-a710"
+      ;;
+    x)
+      if [[ ! -z "${TMUX}" ]]; then
+        readonly tmux="$(command -v tmux 2>/dev/null)"
+      else
+        echo "Warning: tmux is not running, ignore."
+      fi
+      ;;
+    y)
+      QEMU_OKL_HYP="on"
+      ;;
+    z)
+      QEMU_ACTIVE_HYP="on"
+      ;;
+    u)
+      BOOT_ANDROID="true"
+      ;;
+    h) usage 1>&2 ; exit 0 ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+launch-terminal() {
+  if [[ ! -z "${tmux}" ]]; then
+    # Layout:
+    # ┌─────┬─────┐
+    # │     │ REE │
+    # │ HEE ├─────┤
+    # │     │ TEE │
+    # └─────┴─────┘
+    case "${2}" in
+      "HEE") nc -z  127.0.0.1 ${1} || ${tmux} new-window -a -n QEMU ${SOC_TERM_BIN} ${1}; ;;
+      "REE") nc -z  127.0.0.1 ${1} || ${tmux} split-window -t QEMU -h ${SOC_TERM_BIN} ${1}; ;;
+      "TEE") nc -z  127.0.0.1 ${1} || ${tmux} split-window -t QEMU -v ${SOC_TERM_BIN} ${1} && ${tmux} select-pane -t:QEMU ;;
+    esac
+  elif [[ ! -z "${gnome_terminal}" ]];then
+    nc -z  127.0.0.1 ${1} || ${gnome_terminal} -t "${2}" -x ${SOC_TERM_BIN} ${1} &
+  elif [[ ! -z "${xterm}" ]];then
+    nc -z  127.0.0.1 ${1} || ${xterm} -title "${2}" -e ${BASH} -c "${SOC_TERM_BIN} ${1}" &
+  else
+    echo "Error: could not find gnome-terminal nor xterm"
+    exit 1
+  fi
+}
+
+run-help() {
+  echo
+  echo \* QEMU is now waiting to start the execution
+  echo \* Start execution with either a \'c\' followed by \<enter\> in the QEMU console or
+  echo \* attach a debugger and continue from there.
+  echo
+}
+
+wait-for-ports() {
+  while ! nc -z 127.0.0.1 ${1} || ! nc -z 127.0.0.1 ${2} || ! nc -z 127.0.0.1 ${3}; do sleep 1; done
+}
+
+relink_atf_images() {
+  # relink images. link to correct(debug/release) path.
+local regex='venus-[ht]ee'
+
+if [[ "${ZIRCON_PROJECT}" =~ ${regex} ]]; then
+  if [[ ! -e "${QEMU_TEE_KERNEL_PATH}" ]]; then
+    echo "TEE image not found: ${QEMU_TEE_KERNEL_PATH}"
+    exit 1
+  fi
+  if [[ ! -e "${QEMU_ZIRCON_KERNEL_PATH}" ]]; then
+    echo "HEE image not found: ${QEMU_ZIRCON_KERNEL_PATH}"
+    exit 1
+  fi
+
+  if [[ "${TEE_SPD}" == "optee" ]]; then
+    ln -sf ${QEMU_OPTEE_KERNEL_PATH} bl32.bin
+  else
+    ln -sf ${QEMU_TEE_KERNEL_PATH} bl32.bin
+  fi
+
+  ln -sf ${QEMU_ZIRCON_KERNEL_PATH} bl33.bin
+fi
+}
+
+launch_qemu() {
+  cd ${ATF_BUILDROOT}/images/
+
+  relink_atf_images
+
+  for JOB in $(seq 0 $((${EXPECT_JOBS}-1))); do
+    if [[ -n "${QEMU_RUN_CHECK}" ]]; then
+      # expect scripts will find available ports
+      QEMU_SERIAL_FLAGS=" -serial tcp:localhost:\$hee_port"
+      QEMU_SERIAL_FLAGS+=" -serial tcp:localhost:\$tee_port"
+      QEMU_SERIAL_FLAGS+=" -serial tcp:localhost:\$ree_port"
+      EXPECT_SCRIPT="qemu-check-${JOB}.exp"
+    fi
+
+    FUCHSIA_IP_SUBNET_PREFIX=${FUCHSIA_IP_SUBNET_PREFIX:-192.168.3}
+
+    if [[ ! $FUCHSIA_IP_SUBNET_PREFIX =~ ^[0-9]+\.[0-9]+\.([0-9]+)$ ]]
+    then
+      echo "Invalid FUCHSIA_IP_SUBNET_PREFIX '$FUCHSIA_IP_SUBNET_PREFIX'. Please follow the syntax '[0-9]+\.[0-9]+\.[0-9]+'."
+      exit 1
+    fi
+
+    IFNO="$((JOB+BASH_REMATCH[1]))"
+    IFNAME="qemu-${IFNO}"
+    QEMU_VIRTIO_NET_INTERFACES+=("${IFNAME}")
+
+    if [[ "${QEMU_VIRTIO_NET_ENABLE}" == "true" ]]; then
+      FUCHSIA_IP="192.168.${IFNO}.53" # expect will export this var while running
+      MAC=",mac=52:54:00:00:00:$(printf "%02x" ${IFNO})"
+      QEMU_VIRTIO_NET_FLAGS=" -netdev type=tap,ifname=${IFNAME},script=${FUCHSIA_DIR}/scripts/start-dhcp-server.sh,downscript=no,id=net0"
+      QEMU_VIRTIO_NET_FLAGS+=" -device virtio-net-pci,netdev=net0${MAC},vmid=${QEMU_VMID}"
+
+      # If use "SUDO_ASKPASS", then set password from other file.
+      sudo -v -A 2>/dev/null || echo -n
+
+      sudo tunctl -u $(whoami) -t ${IFNAME} > /dev/null
+      sudo ifconfig ${IFNAME} down
+    else
+      # sets default value in case expect complain
+      FUCHSIA_IP="${FUCHSIA_IP_SUBNET_PREFIX}.53"
+    fi
+
+    QEMU_VIRTIO_PCI_FLAGS="-device virtio-gpu-pci,vmid=${QEMU_VMID},xres=1080,yres=1920 -device virtio-tablet-pci,vmid=${QEMU_VMID}"
+
+    if [[ "${QEMU_SCSI_IMAGE}" != "" ]]; then
+      QEMU_DISK_FLAGS+="-drive file=${QEMU_SCSI_IMAGE},index=0,if=none,id=hdd,format=raw "
+      QEMU_DISK_FLAGS+="-device virtio-blk-device,drive=hdd "
+    fi
+
+    if [[ "${BOOT_ANDROID}" == "true" ]]; then
+      if [[ ! -e "${AOSP_PREBUILTS}" ]]; then
+        echo "Downloading AOSP prebuilts..."
+        git clone --depth=1 https://android.googlesource.com/trusty/prebuilts/aosp ${AOSP_PREBUILTS}
+      fi
+
+      if [[ ! -e "${QEMU_ANDROID_IMAGES}" ]]; then
+        mkdir -p ${QEMU_ANDROID_IMAGES}
+        cp ${ANDROID_PREBUILT_IMAGES}/*.img ${QEMU_ANDROID_IMAGES}/
+      fi
+
+      QEMU_DISK_FLAGS+="-drive file=${QEMU_ANDROID_IMAGES}/userdata.img,index=2,if=none,id=hdc,format=raw,snapshot=on "
+      QEMU_DISK_FLAGS+="-device virtio-blk-device,drive=hdc "
+      QEMU_DISK_FLAGS+="-drive file=${QEMU_ANDROID_IMAGES}/vendor.img,index=1,if=none,id=hdb,format=raw,snapshot=on "
+      QEMU_DISK_FLAGS+="-device virtio-blk-device,drive=hdb "
+      QEMU_DISK_FLAGS+="-drive file=${QEMU_ANDROID_IMAGES}/system.img,index=0,if=none,id=hda,format=raw,snapshot=on "
+      QEMU_DISK_FLAGS+="-device virtio-blk-device,drive=hda "
+
+      CMDLINE+="root=/dev/vda ro init=/init androidboot.hardware=qemu_trusty"
+    fi
+
+    cmd="${qemu_dir}/qemu-system-aarch64 \
+      -cpu ${CPU_MODEL} -machine virt,secure=on,virtualization=true \
+      -machine gic_version=${QEMU_GIC_VERSION} \
+      -machine hee_ram_size=${QEMU_HEE_RAM} \
+      -machine ree1_ram_size=${QEMU_REE1_RAM} \
+      -machine ree2_ram_size=${QEMU_REE2_RAM} \
+      -machine tee_ram_size=${QEMU_TEE_RAM} \
+      -machine ion_ram_size=${QEMU_ION_RAM} \
+      -machine active_hyp=${QEMU_ACTIVE_HYP} \
+      -machine boot_android=${BOOT_ANDROID} \
+      -machine trusty_sched_policy=${QEMU_TRUSTY_SCHED_POLICY} \
+      -machine tee_system_mode=${QEMU_TEE_SYSTEM_MODE} \
+      -smp ${QEMU_CPU_NUM} \
+      -m $(($QEMU_HEE_RAM + $QEMU_REE1_RAM + $QEMU_TEE_RAM)) \
+      -bios ${ATF_BUILDROOT}/images/bl1.bin \
+      -kernel ${QEMU_ZIRCON_KERNEL_PATH} \
+      -append \"${CMDLINE}\" \
+      ${QEMU_FUCHSIA_ARGS} \
+      ${QEMU_VIRTIO_NET_FLAGS} \
+      ${QEMU_VIRTIO_V9FS_FLAGS} \
+      ${QEMU_VIRTIO_PCI_FLAGS} \
+      ${QEMU_SERIAL_FLAGS} \
+      ${QEMU_DISK_FLAGS} \
+      ${QEMU_DEBUG_FLAGS} \
+      ${QEMU_EXTRA_ARGS}"
+
+    #############################################################################
+    ## if test, then run the expect and check the result.
+    if [[ -n "${QEMU_RUN_CHECK}" ]]; then
+      expect-init ${EXPECT_SCRIPT} ${QEMU_HEE_PORT} ${QEMU_TEE_PORT} ${QEMU_REE_PORT} ${QEMU_TEE_SYSTEM_MODE}
+      expect-load-scripts "${QEMU_RUN_CHECK}" ${JOB} ${EXPECT_JOBS}
+      exec expect ${EXPECT_OPT} ${EXPECT_SCRIPT} & EXPECT_CPIDS+=("$!")
+    #############################################################################
+    ## if no test, then just run qemu.
+    else
+      eval ${cmd}
+      break
+    fi
+  done
+
+  local exp_err="false"
+
+  for idx in $(seq 0 $((${#EXPECT_CPIDS[@]}-1))); do
+    wait -n "${EXPECT_CPIDS[@]}" || exp_err="true"
+    if [[ "${exp_err}" = "true" ]]; then
+      [[ ${DUMP_LOGS_ON_ERROR} = "true" ]] && \
+        for ecpid in "${EXPECT_CPIDS[@]}"; do
+          local qemulog="serial-qemu-${ecpid}.log"
+          local heelog="serial-hee-${ecpid}.log"
+          local reelog="serial-ree-${ecpid}.log"
+          local teelog="serial-tee-${ecpid}.log"
+          echo "== ${PWD}/${qemulog}:"; cat "${qemulog}"; echo "== end of ${PWD}/${qemulog}:"
+          echo "== ${PWD}/${teelog}:"; cat "${teelog}"; echo "== end of ${PWD}/${teelog}:"
+          echo "== ${PWD}/${heelog}:"; cat "${heelog}"; echo "== end of ${PWD}/${heelog}:"
+          echo "== ${PWD}/${reelog}:"; cat "${reelog}"; echo "== end of ${PWD}/${reelog}:"
+        done
+
+      for ecpid in "${EXPECT_CPIDS[@]}"; do
+        kill "$ecpid" &> /dev/null || :
+      done
+      exit 1
+    fi
+  done
+
+} # end of launch_qemu()
+
+# Do not pass "TERM=xterm-256color" to expect
+if [[ -z "${QEMU_RUN_CHECK}" ]] && [[ -n $TERM ]]; then
+  CMDLINE+="TERM=$TERM "
+fi
+
+#############################################################################
+## if dump the device tree of qemu.
+if [[ "${DUMP_DEVICE_TREE}" = "true" ]]; then
+  launch_qemu
+  dtc -I dtb -O dts ${DTB_FILE} > ${DTS_FILE}
+  exit 0
+fi
+
+#############################################################################
+# if not test, then run the terminal.
+run-help
+
+if [[ "${QEMU_RUN_CHECK}" = "" ]]; then
+  launch-terminal 54320 "HEE"
+  launch-terminal 54322 "REE"
+  launch-terminal 54321 "TEE"
+  wait-for-ports 54320 54321 54322
+fi
+
+trap cleanup INT ERR EXIT
+cleanup() {
+  ERRNO=$?
+  if [[ -n "$(ifconfig -a | grep qemu-)" ]]; then
+    for IFNAME in "${QEMU_VIRTIO_NET_INTERFACES[@]}"; do
+      sudo tunctl -d "${IFNAME}" &> /dev/null
+      DNSMASQ="$(pgrep -fo "interface=${IFNAME}" | tr '\n' ' ')"
+      [[ -n "${DNSMASQ}" ]] && sudo kill ${DNSMASQ} &> /dev/null
+    done
+  fi
+  return $ERRNO
+}
+
+launch_qemu

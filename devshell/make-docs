@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# Copyright 2019 GoldenRiver Technology Co., Ltd. All rights reserved.
+
+# make document for public domain.
+# All markdown files should be written by rules of "http://www.doxygen.nl/manual/markdown.html".
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+# options:
+# -o : output path
+# -t : with two toolchains for ree and hee.
+function help()
+{
+    echo "Usage: make document for Nebula developers."
+    echo "  <-o dir>: directory output document."
+    echo "  [-h]: show help."
+}
+
+OUTPUT_DIR=
+
+while getopts 'o:h' OPT; do
+    case $OPT in
+        o)
+            OUTPUT_DIR="$OPTARG";;
+        h)
+            help
+            exit 0;;
+        ?)
+            help
+            exit 1;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+# check options
+if [ -z "$OUTPUT_DIR" ]; then
+    echo "Please set output dir by \"-o\"."
+    exit 1
+fi
+
+if [ ! -d "$OUTPUT_DIR" ]; then
+    mkdir -p $OUTPUT_DIR
+fi
+
+DOC_FROM=${FUCHSIA_DIR}/docs/nebula
+if [ ! -d $DOC_FROM ]; then
+    echo "Cannot find document's configuration files in \"$DOC_FROM\""
+    exit 1
+fi
+
+# export directory of docs, for doxygen config file.
+# TODO:
+# 1. Currently create only document of html format, no pdf.
+# 2. Now create only tee document. Sometime merge HEE document.
+export NBL_DOCS_OUTPUT_DIR=$OUTPUT_DIR
+(cd ${DOC_FROM} && doxygen nebula_docs.conf)

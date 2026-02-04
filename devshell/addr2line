@@ -1,0 +1,27 @@
+# Copyright 2019 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+#!/bin/bash
+
+## usage: fx addr2line file
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+if [[ $# -eq 0 ]]; then
+  fx-command-help
+  exit 1
+fi
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/debug_utils.sh
+target_file=$(find_file_with_debug_symbol $1)
+
+if [[ ! -n ${target_file} ]]; then
+  echo "File not found"
+  exit 1
+fi
+
+echo "target file: ${target_file}"
+readonly GCC_TOOLCHAIN_PATH="$(dirname ${LINARO_AARCH64_CROSS_COMPILE})/../"
+${GCC_TOOLCHAIN_PATH}/bin/aarch64-linux-gnu-addr2line -Cipfe ${target_file}

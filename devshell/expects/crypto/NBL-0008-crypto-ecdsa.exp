@@ -1,0 +1,30 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # install exe into HEE
+    set ha_id "4266fdf9-8ba7-4e30-bcdb-b776dadcbae1"
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e crypto_test -a $env(FUCHSIA_IP) -i $ha_id"
+    # set the run command in HEE.
+    set cmd "nbl_daemon -l $ha_id -a \"--gtest_filter=ECDSATest*\""
+} else {
+    set cmd "nblruncmd /system/test/crypto_test --gtest_filter=ECDSATest*"
+}
+send -i $ree "$cmd\r"
+# [==========] 4 tests from 1 test case ran. (67165 ms total)
+set timeout 180
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree {*\[  FAILED  \]*} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree {\[  PASSED  \]*}
+}

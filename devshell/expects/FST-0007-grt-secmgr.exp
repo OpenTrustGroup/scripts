@@ -1,0 +1,25 @@
+# Test "third-party/ree-trusty/libnbl_secmgr_ree"
+
+# This test needs /root/ree/provision/secmgr_test_ree_ha1 & secmgr_test_ree_ha2.
+
+set cmd "libnbl_secmgr_ree_test"
+send -i $ree "$cmd\r"
+set timeout 30
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree -re {Conditions failed:  [1-9][0-9]*} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "All tests PASSED"
+}

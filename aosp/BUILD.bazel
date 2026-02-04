@@ -1,0 +1,5 @@
+package(default_visibility=['//visibility:public'])
+filegroup(
+    name = "platform_keystore",
+    srcs = ["platform.keystore"],
+)

@@ -1,0 +1,30 @@
+#!/bin/bash
+# Copyright 2020 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+export PATH=$PATH:$GOSDK_HOME/bin
+export PATH=$PATH:$LINARO_AARCH64_TOOLCHAIN_HOME/bin
+
+pushd "${BAZEL_HOST_DIR}" > /dev/null
+
+bazelisk build //:all \
+  --action_env="GOCACHE=$(go env GOCACHE)" \
+
+popd > /dev/null
+
+# TODO: Remove backward compatible stuffs when all modules bazelized.
+
+SYZKALLER_OUT=${BAZEL_HOST_OUT}/syzkaller
+SYZKALLER_BIN=${SYZKALLER_OUT}/src/github.com/google/syzkaller/bin
+ln -sf ${SYZKALLER_OUT} ${FUCHSIA_OUT_DIR}
+# IMX device configurations, na: Non Android
+cd ${SYZKALLER_BIN} && ln -sf linux_arm64 linux-na_arm64
+
+fx-show-elapsed-time

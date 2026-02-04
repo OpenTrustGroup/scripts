@@ -1,0 +1,80 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+fx-config-read
+
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../ && pwd)"
+readonly ROOT_DIR="$(dirname "${SCRIPT_DIR}")"
+
+JOBS=`getconf _NPROCESSORS_ONLN` || {
+  Cannot get number of processors
+  exit 1
+}
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+usage() {
+  echo "$0 <options> <extra-make-arguments>"
+  echo ""
+  echo "Options:"
+  echo "  -c: Clean before building"
+  echo "  -G: GCC build (default Clang build)"
+  echo "  -v: Level 1 verbosity"
+  echo "  -V: Level 2 verbosity"
+  echo ""
+}
+
+declare CLANG=${CLANG:-"true"}
+declare CLEAN="false"
+declare OUTDIR="${ROOT_DIR}/out"
+declare VERBOSE="0"
+declare VERIFY_TA_BUILD="1"
+
+while getopts "CcGhvV" opt; do
+  case "${opt}" in
+    c) CLEAN="true" ;;
+    G) CLANG="false" ;;
+    h) usage ; exit 0 ;;
+    v) VERBOSE="1" ;;
+    V) VERBOSE="2" ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+shift $(($OPTIND - 1))
+
+readonly CLANG CLEAN OUTDIR VERBOSE
+readonly TIPC_TEST_PATH="${ROOT_DIR}/third_party/tipc-test"
+readonly TIPC_TEST_BUILDROOT="${OUTDIR}/build-tipc-test"
+readonly REE_TRUSTY_PATH="${ROOT_DIR}/third_party/ree-trusty"
+readonly REE_TRUSTY_BUILDROOT="${OUTDIR}/build-ree-trusty"
+readonly REE_TRUSTY_NDK_BUILDROOT="${OUTDIR}/build-ree-trusty-ndk"
+
+if [[ "${CLEAN}" = "true" ]]; then
+  rm -rf -- "${TIPC_TEST_BUILDROOT}"
+  rm -rf -- "${REE_TRUSTY_NDK_BUILDROOT}"
+fi
+
+case "${VERBOSE}" in
+  1) QUIET=0 ; V=0 ;;
+  2) QUIET=0 ; V=1 ;;
+  *) QUIET=1 ; V=0 ;;
+esac
+export QUIET V
+
+echo "Build REE Trusty..."
+
+mkdir -p ${REE_TRUSTY_BUILDROOT}
+GCC_CROSS_COMPILE="${LINARO_AARCH64_CROSS_COMPILE}" \
+    CLANG_CROSS_COMPILE="${BUILDTOOLS_CLANG_DIR}/bin/" \
+    USE_CLANG="${CLANG}" \
+    BUILD_DIR="${REE_TRUSTY_BUILDROOT}" \
+    VERIFY_TA="${VERIFY_TA_BUILD}" \
+    make -C ${REE_TRUSTY_PATH} -j ${JOBS} $@
+
+fx-command-run build-dropbear
+fx-command-run build-ree-trusty-ndk

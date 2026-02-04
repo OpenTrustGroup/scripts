@@ -1,0 +1,153 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build third_party/ree-trusty by Android NDK
+### Use White List for prevending that wrong folder is exported.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+echo "########################################################################"
+echo "Export ree-trusty into customers as a project in Android source tree."
+echo "########################################################################"
+
+function usage()
+{
+  printf '%s: <-o> [-h]\n' "$0"
+  printf '  -o <path>     path for built files.\n'
+  printf '  -h            show help\n'
+  printf '  -u            MTK UREE support\n'
+}
+
+REE_OUT_DIR=
+MTK_UREE_SUPPORT=0
+
+while getopts "ho:u" opt; do
+  case "${opt}" in
+    o)
+      REE_OUT_DIR=${OPTARG}
+      ;;
+    u)
+      MTK_UREE_SUPPORT=1
+      ;;
+    h) usage 1>&2 ; exit 0 ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [ -z "$REE_OUT_DIR" ]; then
+    echo "Please set output folder by option \"-o\"."
+    exit 1
+fi
+mkdir -p $REE_OUT_DIR
+
+FROM_DIR=$FUCHSIA_DIR
+
+# $1 : from dir except FUCHSIA_DIR
+# $2 : to dir
+function copy_dir
+{
+    from_dir=$FROM_DIR/$1
+    to_dir=$REE_OUT_DIR/$2
+
+    mkdir -p `dirname $to_dir`
+    cp -rf $from_dir $to_dir
+}
+
+# $1 : from file except FUCHSIA_DIR
+# $2 : to file
+function copy_file
+{
+    from_file=$FROM_DIR/$1
+    to_dir=$REE_OUT_DIR/$2
+
+    mkdir -p $to_dir
+    cp -f $from_file $to_dir
+}
+
+# $1: dir which be deleted
+function rm_dir()
+{
+    if [ -d $1 ]; then
+        rm -rf $1
+    fi
+}
+
+copy_dir zircon/trusty/lk/trusty/include/uapi ree-trusty/zircon/trusty/lk/trusty/include/uapi
+copy_dir zircon/trusty/lk/trusty/lib/trusty/include/lib/trusty ree-trusty/zircon/trusty/lk/trusty/lib/trusty/include/lib/trusty
+copy_dir zircon/trusty/lib/include/user ree-trusty/zircon/trusty/lib/include/user
+copy_dir third_party/hee-trusty/nbl_loader_srv/common ree-trusty/hee-trusty/nbl_loader_srv/common
+copy_file third_party/hee-trusty/nbl_license_srv/command.h ree-trusty/hee-trusty/nbl_license_srv
+
+copy_file third_party/ree-trusty/Android.mk ree-trusty
+
+copy_dir third_party/ree-trusty/libnbl_fwk_ree ree-trusty/
+rm_dir $REE_OUT_DIR/ree-trusty/libnbl_fwk_ree/tests
+rm_dir $REE_OUT_DIR/ree-trusty/libnbl_fwk_ree/doc
+
+copy_dir third_party/ree-trusty/libnbl_license_ree ree-trusty/
+rm_dir $REE_OUT_DIR/ree-trusty/libnbl_license_ree/tests
+
+copy_dir third_party/ree-trusty/libnbl_loader_ree ree-trusty/
+rm_dir $REE_OUT_DIR/ree-trusty/libnbl_loader_ree/tests
+rm $REE_OUT_DIR/ree-trusty/libnbl_loader_ree/Android.mk
+mv $REE_OUT_DIR/ree-trusty/libnbl_loader_ree/Android.mk.AOSP $REE_OUT_DIR/ree-trusty/libnbl_loader_ree/Android.mk
+
+copy_dir third_party/ree-trusty/libnbl_secmgr_ree ree-trusty/
+rm_dir $REE_OUT_DIR/ree-trusty/libnbl_secmgr_ree/tests
+
+copy_dir third_party/ree-trusty/libtrusty ree-trusty/
+rm_dir $REE_OUT_DIR/ree-trusty/libtrusty/tipc-test
+
+copy_dir third_party/ree-trusty/log ree-trusty/
+
+copy_dir third_party/ree-trusty/nbl_daemon ree-trusty/
+rm     $REE_OUT_DIR/ree-trusty/nbl_daemon/start_nbl_daemon
+
+copy_dir third_party/ree-trusty/storage ree-trusty/
+rm_dir $REE_OUT_DIR/ree-trusty/storage/tests
+rm     $REE_OUT_DIR/ree-trusty/storage/proxy/start_proxyd
+
+if [ $MTK_UREE_SUPPORT = 1 ]; then
+  copy_dir third_party/ree-trusty/uree ree-trusty/
+  rm $REE_OUT_DIR/ree-trusty/uree/libgz_uree/Android.mk
+  mv $REE_OUT_DIR/ree-trusty/uree/libgz_uree/Android.mk.AOSP $REE_OUT_DIR/ree-trusty/uree/libgz_uree/Android.mk
+
+  copy_dir third_party/ree-trusty/libion_mtk ree-trusty/
+  rm $REE_OUT_DIR/ree-trusty/libion_mtk/Android.mk
+  mv $REE_OUT_DIR/ree-trusty/libion_mtk/Android.mk.AOSP $REE_OUT_DIR/ree-trusty/libion_mtk/Android.mk
+fi
+
+# Enter out folder and do some scripts.
+(
+    cd $REE_OUT_DIR
+
+    find -name *.o | xargs rm -f
+    find -name BUILD.gn | xargs rm -f
+    find -name Makefile | xargs rm -f
+    find ree-trusty/hee-trusty -name *.c | xargs rm -f
+    find ree-trusty/zircon -name *.c | xargs rm -f
+
+    # $(LOCAL_PATH)/../../hee-trusty/ -> $(LOCAL_PATH)/../hee-trusty/
+    find -name "Android.mk" | xargs sed -i 's/\.\.\/\.\.\/hee-trusty/\.\.\/hee-trusty/g'
+    # $(LOCAL_PATH)/../../../zircon -> $(LOCAL_PATH)/../zircon
+    find -name "Android.mk" | xargs sed -i 's/\.\.\/\.\.\/\.\.\/zircon/\.\.\/zircon/g'
+)
+
+# special op: [Must be below "sed" command.]
+# - For building same name libraries(shared and static), use Android.mk2.
+#   so exported ree-trusty only can be built in Android source.
+rm $REE_OUT_DIR/ree-trusty/libtrusty/Android.mk
+mv $REE_OUT_DIR/ree-trusty/libtrusty/Android.mk.AOSP $REE_OUT_DIR/ree-trusty/libtrusty/Android.mk
+
+VERSION_STR=`git -C $FROM_DIR/third_party/ree-trusty describe --always --tags`
+sed -i "s/NEBULA_VERSION_AUTO :=/NEBULA_VERSION_AUTO := ${VERSION_STR}/g" $REE_OUT_DIR/ree-trusty/Android.mk
+
+if [ $MTK_UREE_SUPPORT != 1 ]; then
+  sed -i "s/NEBULA_DISABLE_UREE_AUTO :=/NEBULA_DISABLE_UREE_AUTO := y/g" $REE_OUT_DIR/ree-trusty/Android.mk
+fi

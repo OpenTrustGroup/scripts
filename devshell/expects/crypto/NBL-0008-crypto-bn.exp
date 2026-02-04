@@ -1,0 +1,31 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # install exe into HEE
+    set ha_id "4266fdf9-8ba7-4e30-bcdb-b776dadcbae1"
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e crypto_test -a $env(FUCHSIA_IP) -i $ha_id"
+    # set the run command in HEE.
+    set cmd "nbl_daemon -l $ha_id -a \"--gtest_filter=BNTest*\""
+} else {
+    set cmd "nblruncmd /system/test/crypto_test --gtest_filter=BNTest*"
+}
+send -i $ree "$cmd\r"
+# [       OK ] BNTest.TestVectors (52895 ms)
+# [       OK ] BNTest.PrimeChecking (12269 ms)
+set timeout 1200
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree {*\[  FAILED  \]*} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree {\[  PASSED  \]*}
+}

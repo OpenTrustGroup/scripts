@@ -1,0 +1,239 @@
+#!/bin/bash
+# Copyright 2021 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### Export Nebula REE artifacts for Android BSP integration
+
+## usage: fx export-nebula-ree -o <output_path> [-f] [-h]
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly NEBULA_DIR="${FUCHSIA_DIR}"
+declare output_path=""
+declare full_set_sdk="false"
+
+while getopts "fho:" opt; do
+  case "${opt}" in
+    o) output_path=${OPTARG} ;;
+    f) full_set_sdk="true" ;;
+    h) fx-command-help; exit 0 ;;
+    *) fx-command-help; exit 1 ;;
+  esac
+done
+
+if [ -z "${output_path}" ]; then
+  echo "Error: invalid options"
+  fx-command-help
+  exit 1
+fi
+
+# function prebuilt_shared_library()
+# {
+#   local folder=$1
+#   local lib=$2
+#   local lib_name=$(basename $2 .so)
+
+#   mkdir -p ${output_path}/${folder}
+#   copy_file bazel/ree/bazel-bin/external/ree/ndk/${folder}/libs/arm64-v8a/${lib} ${folder}/${lib}
+#   copy_dir third_party/ree-trusty/${folder}/include ${folder}
+#   cat > ${output_path}/${folder}/Android.mk << EOF
+# LOCAL_PATH := \$(call my-dir)
+
+# include \$(CLEAR_VARS)
+
+# LOCAL_MODULE := ${lib_name}
+# LOCAL_MODULE_CLASS := SHARED_LIBRARIES
+# LOCAL_MODULE_SUFFIX := .so
+# LOCAL_VENDOR_MODULE := true
+
+# LOCAL_SRC_FILES := ${lib}
+# LOCAL_EXPORT_C_INCLUDE_DIRS := \$(LOCAL_PATH)/include
+# LOCAL_EXPORT_C_INCLUDES=\$(LOCAL_EXPORT_C_INCLUDE_DIRS)
+
+# include \$(BUILD_PREBUILT)
+# EOF
+# }
+
+function copy_files() {
+  local copy_list="${1}"
+  local exclude_list="${2}"
+  local rsync_options="-a --delete"
+
+  if [[ "${TRACE}" ]]; then
+    rsync_options+=" -v"
+  fi
+
+  for paths in ${copy_list}; do
+    IFS=':'
+    tmp_arr=($paths)
+    unset IFS
+    src="${NEBULA_DIR}/${tmp_arr[0]}"
+    exclude_str="${tmp_arr[1]}"
+    dst="${output_path}/${tmp_arr[2]}"
+    dst_parent_dir="$(dirname "${dst}")"
+    exclude_options=""
+
+    # Add common exclude options
+    for p in ${exclude_list}; do
+      exclude_options+="--exclude '${p}' "
+    done
+
+    # Add per-entry exclude options
+    if [[ -n "${exclude_str}" ]]; then
+      IFS=','
+      tmp_arr1=($exclude_str)
+      unset IFS
+      for p in "${tmp_arr1[@]}"; do
+        exclude_options+="--exclude '${p}' "
+      done
+    fi
+
+    if [[ ! -d "${dst_parent_dir}" ]]; then
+      mkdir -p "$(dirname "${dst}")"
+    fi
+    eval rsync ${rsync_options} ${exclude_options} "${src}" "${dst}"
+  done
+}
+
+function gen_ta_makefile() {
+  local ta_name="${1}"
+  local output_path="${2}"
+
+  echo -e "\nGenerating ${ta_name} TA makefile: ${output_path}"
+  cat > ${output_path} << EOF
+SDK_HOME ?= ../../..
+TARGET = ${ta_name}
+SD_PRIVILEGE_FILE_ARG=--sd_privilege_file sd.privilege
+MK_PATH := \$(dir \$(abspath \$(lastword \$(MAKEFILE_LIST))))
+
+.PHONY: clean all provision
+
+clean:
+	rm -rf \${LOCAL_OBJS_DIR}
+
+all:
+	@echo "ignore compiling prebuilt TA: \${TARGET}"
+
+provision:
+	mkdir -p \${LOCAL_OBJS_DIR}/
+	\${SDK_HOME}/run/otrp/provision_tool/provision_create_ha_by_config.sh -c \${CONFIG_FOLDER_PATH} -e \${MK_PATH}/\${TARGET} -o \${LOCAL_OBJS_DIR}/provision \${SD_PRIVILEGE_FILE_ARG}
+
+include \${SDK_HOME}/make/hee-dummy.mk
+EOF
+}
+
+# Format:
+# - dir:  "<src_path>/:[<exclude_pattern1>,<exclude_pattern2>,...]:<dst_path>"
+# - file: "<src_path>:[<exclude_pattern1>,<exclude_pattern2>,...]:<dst_path>"
+readonly ca_dir="ca"
+declare -a ca_files=(
+  "third_party/ree-trusty/nbl_headers/::${ca_dir}/nbl_headers"
+  "zircon/trusty/lk/trusty/include/uapi/::${ca_dir}/nbl_headers/zircon/trusty/lk/trusty/include/uapi"
+  "zircon/trusty/lk/trusty/lib/trusty/include/lib/trusty/::${ca_dir}/nbl_headers/zircon/trusty/lk/trusty/lib/trusty/include/lib/trusty"
+  "zircon/trusty/lib/include/user/::${ca_dir}/nbl_headers/zircon/trusty/lib/include/user"
+  "third_party/hee-trusty/nbl_loader_srv/common/::${ca_dir}/nbl_headers/hee-trusty/nbl_loader_srv/common"
+  "third_party/ree-trusty/libnbl_fwk_ree/:doc:${ca_dir}/libnbl_fwk_ree"
+  "third_party/ree-trusty/libnbl_loader_ree/:tests,Android.mk:${ca_dir}/libnbl_loader_ree"
+  "third_party/ree-trusty/libnbl_secmgr_ree/:tests:${ca_dir}/libnbl_secmgr_ree"
+  "third_party/ree-trusty/libtrusty/:tipc-test,Android.mk,Android.mk.AOSP:${ca_dir}/libtrusty"
+  "third_party/ree-trusty/log/::${ca_dir}/log"
+  "third_party/ree-trusty/libnbl_license_ree/:tests:${ca_dir}/libnbl_license_ree"
+  "third_party/ree-trusty/nbl_daemon/:start_nbl_daemon:${ca_dir}/nbl_daemon"
+  "third_party/ree-trusty/nblmsg/::${ca_dir}/nblmsg"
+  "third_party/ree-trusty/benchmark/::${ca_dir}/benchmark"
+  "third_party/ree-trusty/nbl_benchmarks/::${ca_dir}/nbl_benchmarks"
+  "third_party/ree-trusty/storage/:tests,start_proxyd:${ca_dir}/storage"
+  "third_party/ree-trusty/nbl_keymaster/::${ca_dir}/nbl_keymaster"
+  "third_party/ree-trusty/nbl_gatekeeper/::${ca_dir}/nbl_gatekeeper"
+  "third_party/ree-trusty/interfaces/::${ca_dir}/interfaces"
+  "third_party/ree-trusty/libnbl_seccam_client/::${ca_dir}/libnbl_seccam_client"
+  #"third_party/ree-trusty/nbl_gatekeeper-unit-tests/::${ca_dir}/nbl_gatekeeper-unit-tests"
+  "third_party/hee-trusty/nbl_license_srv/command.h::${ca_dir}/nbl_headers/hee-trusty/nbl_license_srv/command.h"
+  "third_party/ree-trusty/libnbl_tee_hidl/::${ca_dir}/libnbl_tee_hidl"
+  "third_party/ree-trusty/libnbl_rpc_hidl/::${ca_dir}/libnbl_rpc_hidl"
+  "third_party/ree-trusty/libfuchsia/::${ca_dir}/libfuchsia"
+  "third_party/ree-trusty/libnbl_vhm/::${ca_dir}/libnbl_vhm"
+  "third_party/ree-trusty/libnebula-cpp/::${ca_dir}/libnebula-cpp"
+  "third_party/ree-trusty/Android.mk::${ca_dir}/Android.mk"
+  "third_party/fdt::${ca_dir}"
+  "third_party/rapidjson::${ca_dir}"
+  "third_party/virglrenderer::${ca_dir}"
+  "third_party/libepoxy::${ca_dir}"
+  "third_party/oboe::${ca_dir}"
+)
+
+# REE files exclude patterns
+declare -a ca_excludes=(
+  "BUILD.gn"
+  "Makefile"
+)
+
+readonly atf_dir="atf"
+declare -a atf_files=(
+  "arm-trusted-firmware/services/spd/nebula/::${atf_dir}/services/spd/nebula"
+#  "arm-trusted-firmware/plat/mediatek/common/mtk_plat_smc.c::${atf_dir}/plat/mediatek/common/mtk_plat_smc.c"
+)
+
+readonly linux_dir="linux"
+declare -a linux_files=(
+  "linux/drivers/nebula/::${linux_dir}/drivers/nebula"
+  "linux/include/linux/nebula/::${linux_dir}/include/linux/nebula"
+  "linux/drivers/virt/acrn/::${linux_dir}/drivers/virt/acrn"
+  "linux/drivers/char/guest_memory/::${linux_dir}/drivers/char/guest_memory"
+  "linux/arch/arm64/acrn/::${linux_dir}/arch/arm64/acrn"
+  "linux/arch/arm64/include/asm/acrn.h::${linux_dir}/arch/arm64/include/asm/acrn.h"
+  "linux/include/uapi/linux/acrn.h::${linux_dir}/include/uapi/linux/acrn.h"
+)
+
+# TODO: move kmsetkey TA to gx-dev
+readonly ta_dir="ta"
+declare -a ta_files=(
+  "out/arm64/kmsetkey::${ta_dir}/kmsetkey/common/ta/kmsetkey"
+  "third_party/hee-trusty/kmsetkey/sd.privilege::${ta_dir}/kmsetkey/common/ta/sd.privilege"
+)
+
+
+echo -e "\nCleaning output dir: ${output_path}"
+mkdir -p "${output_path}"
+eval rm -rf "${output_path}/*"
+
+echo -e "\nExporting buildroot"
+fx export-buildroot -o "${output_path}/buildroot"
+
+if [[ "${full_set_sdk}" == "true" ]]; then
+  echo -e "\nExporting Nebula sdk"
+  fx make-sdk -t -N -q -o "${output_path}/sdk"
+  rm -rf "${output_path}/sdk/docs"
+  rm -rf "${output_path}/sdk/examples"
+  rm -rf "${output_path}/sdk/test_suite"
+else
+  echo -e "\nExporting otrp sdk tool (for signing TA only)"
+  fx make-sdk -r -o "${output_path}/sdk"
+fi
+
+echo -e "\nExporting ATF source"
+eval copy_files \"${atf_files[@]}\" ""
+
+echo -e "\nExporting Linux source"
+eval copy_files \"${linux_files[@]}\" ""
+
+echo -e "\nExporting prebuilt TAs"
+eval copy_files \"${ta_files[@]}\" ""
+gen_ta_makefile "kmsetkey" "${output_path}/${ta_dir}/kmsetkey/common/ta/Makefile"
+
+echo -e "\nExporting CA source"
+eval copy_files \"${ca_files[@]}\" \"${ca_excludes[@]}\"
+
+#prebuilt_shared_library ion_test libc++_shared.so
+mv ${output_path}/${ca_dir}/libnbl_loader_ree/Android.mk.AOSP ${output_path}/${ca_dir}/libnbl_loader_ree/Android.mk
+
+VERSION_STR=`git -C ${NEBULA_DIR}/third_party/ree-trusty describe --always --tags`
+echo -e "\nUpdating Nebula version string to: ${VERSION_STR}"
+sed -i "s/NEBULA_VERSION_AUTO :=/NEBULA_VERSION_AUTO := ${VERSION_STR}/g" ${output_path}/${ca_dir}/Android.mk
+sed -i "s/NEBULA_DISABLE_UREE_AUTO :=/NEBULA_DISABLE_UREE_AUTO := y/g" ${output_path}/${ca_dir}/Android.mk
+
+echo -e "\nDone."

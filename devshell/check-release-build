@@ -1,0 +1,75 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Check whether or not the files in RELEASE build is OK.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+# DON'T use "set -e", because the script will try some error operations.
+set -e; [[ "${TRACE}" ]] && set -x
+
+echo "Start to check the Release Build ..."
+
+# If there is some diff, show the prompt.
+# $1 : expected, $2: real
+function diff_and_prompt()
+{
+    # In jenkins server, the path is
+    #              "bin/devhost=../../../workspace/VENUS/nebula/out/build-zircon-release/build-venus-hee/system/core/devmgr.host/devmgr.host.elf.strip",
+    # but local is "bin/devhost=../build-zircon-release/build-venus-hee/system/core/devmgr.host/devmgr.host.elf.strip"
+    # so I remove string from "=" to end.
+    cat $2 | sed "s/=.*$//g" | \
+    diff $1 - || { \
+        echo "diff expect:\"$1\""; \
+        echo "   and real:\"$2\"."; \
+        echo "There are some different." ; \
+        echo " * If the diff is wanted, then change \"$1\"." ; \
+        echo " * If the diff is NOT wanted, please check whether or not include wrong package." ; \
+        exit 1; }
+}
+
+# Find the expected string in file.
+# $1 : unexpected string
+# $2 : file
+# $3 : message
+function find_unexpect()
+{
+    grep $1 $2 && { echo "The zircon kernel should NOT contains \"$3\"."; exit 1;}
+    return 0
+}
+
+# 1, check the /boot in user.bootfs.
+# - compare with the white list.
+diff_and_prompt ${FUCHSIA_DIR}/scripts/manifest/boot.manifest.rel ${FUCHSIA_OUT_DIR}/arm64/boot.manifest.rel
+
+# 2, check the /system in user.bootfs.
+# - compare with the white list.
+if [ -f "${FUCHSIA_OUT_DIR}/arm64/system.manifest.rel.temp" ];then
+    rm ${FUCHSIA_OUT_DIR}/arm64/system.manifest.rel.temp
+fi
+cp ${FUCHSIA_OUT_DIR}/arm64/system.manifest.rel ${FUCHSIA_OUT_DIR}/arm64/system.manifest.rel.temp
+#The number of TSMs is uncertain, so file checking is not possible.
+sed -i '/tsm_root_cert_other*/d' ${FUCHSIA_OUT_DIR}/arm64/system.manifest.rel.temp
+#This configuration file is used for the configuration of the hee name of the release secmgr, etc.
+#The old version does not have this configuration file. If there is no configuration file, the default value in the code is taken.
+sed -i '/secmgr_build_config*/d' ${FUCHSIA_OUT_DIR}/arm64/system.manifest.rel.temp
+
+diff_and_prompt ${FUCHSIA_DIR}/scripts/manifest/system.manifest.rel ${FUCHSIA_OUT_DIR}/arm64/system.manifest.rel.temp
+
+# 3, check the zircon's kernel.
+# - The modules in kernel maybe are often chagned, so check the black list.
+LIST=${FUCHSIA_OUT_DIR}/build-zircon-release/build-venus-hee/zircon.elf.mods.list
+
+if [ ! -e $LIST ]; then
+    echo "Cannot find ${LIST}."
+    exit 1
+fi
+
+find_unexpect "debugcommands" ${LIST} "debugcommands"
+find_unexpect "pow2_tests" ${LIST} "pow2_tests"
+find_unexpect "kernel/tests" ${LIST} "tests in zircon/kernel/tests"
+
+echo "The Release Build is OK."

@@ -1,0 +1,74 @@
+#!/bin/bash
+# Copyright 2020 GoldenRiver Authors. All rights reserved.
+
+### export nebula buildroot for nebula combo image customization
+## usage: fx export-buildroot -o <buildroot_out_dir> [-p <packages_home>]
+##
+## default package_home: ${FUCHSIA_DIR}/build/nebula/buildroot_packages
+##
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+declare PACKAGES_HOME="${FUCHSIA_DIR}/build/nebula/buildroot_packages"
+declare OUT_DIR=""
+declare USE_DEFAULT_PACKAGES_HOME="true"
+
+while [[ $# -ne 0 ]]; do
+  case "$1" in
+    -o)
+      if [[ $# -lt 2 ]]; then
+        fx-command-help
+        exit 1
+      fi
+      OUT_DIR="$(realpath ${2})"
+      shift
+      ;;
+    -p)
+      if [[ $# -lt 2 ]]; then
+        fx-command-help
+        exit 1
+      fi
+      PACKAGES_HOME="$(realpath ${2})"
+      USE_DEFAULT_PACKAGES_HOME="false"
+      shift
+      ;;
+    *)
+      fx-command-help
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [[ -z "${OUT_DIR}" ]]; then
+  fx-command-help
+  exit 1
+fi
+
+if [[ ! -d "${PACKAGES_HOME}" ]]; then
+  echo "Error: PACKAGES_HOME not existed: ${PACKAGES_HOME}"
+  fx-command-help
+  exit 1
+fi
+
+if [[ "${USE_DEFAULT_PACKAGES_HOME}" == "true" ]]; then
+  if [[ ! -L "${PACKAGES_HOME}/garnet/packages" ]]; then
+    echo "Creating package symbolic link at ${PACKAGES_HOME}/garnet/packages"
+    mkdir -p ${PACKAGES_HOME}/garnet
+    rm -rf ${PACKAGES_HOME}/garnet/packages
+    ln -s ${FUCHSIA_DIR}/garnet/packages ${PACKAGES_HOME}/garnet/packages
+  fi
+fi
+
+echo "Exporting buildroot to ${OUT_DIR}"
+cd ${FUCHSIA_DIR} && build/gn/buildroot_initialize.py \
+    --nebula-home ${FUCHSIA_DIR} \
+    --buildroot-home ${OUT_DIR} \
+    --packages-home ${PACKAGES_HOME}
+
+cp ${FUCHSIA_DIR}/build/nebula/export-prebuilt-images.sh ${OUT_DIR}/
+
+echo "Done."

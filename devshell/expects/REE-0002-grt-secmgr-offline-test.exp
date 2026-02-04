@@ -1,0 +1,140 @@
+# install exe into HEE
+sleep 2
+set ha_id 905bdb21-2dc5-429d-c952-723548890101
+exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e secmgr_test1 -a $env(FUCHSIA_IP) -i $ha_id"
+# set the run command in HEE.
+set cmd "nbl_daemon -l $ha_id"
+
+send -i $ree "$cmd\r"
+
+set timeout 150
+expect {
+    -i $console timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $console "*Secmgr test ha1*" {
+        printf "Secmgr offline test install normal ha success!!!\n"
+    }
+    -i $ree "$ " {
+        exp_continue
+    }
+}
+sleep 2
+
+exec bash -c "make -C $NBL_SDK_PATH/examples/hee/libc"
+
+sleep 2
+# offline install exe into HEE
+exec bash -c "$NBL_SDK_PATH/run/otrp/unit_test_script/provision_other_sp.sh -e $NBL_SDK_PATH/test_suite/system/test/secmgr_test/secmgr_test_offline -a $env(FUCHSIA_IP)"
+# set the run command in HEE.
+set cmd "nbl_daemon -l 47363cea-4d2c-43d9-b502-d1f64e63c9a8"
+
+send -i $ree "$cmd\r"
+
+set timeout 150
+expect {
+    -i $console timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $console "*Secmgr test offline ha!*" {
+        printf "Secmgr install offline ha success!\n"
+    }
+    -i $ree "$ " {
+        exp_continue
+    }
+}
+
+sleep 2
+set timeout 300
+spawn java -jar $NBL_SDK_PATH/run/otrp/debug_tool/secmgr_debug_tool.jar test_provision_update_spaik --ssh_ip $env(FUCHSIA_IP) --temp_folder $env(FUCHSIA_OUT_DIR)/testfile/$env(FUCHSIA_IP)
+
+set secmgr_debug_tool $spawn_id
+expect {
+    -i $secmgr_debug_tool timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+    -i $secmgr_debug_tool "*Secmgr offline get test failed*" {
+        printf "SECMGR TEST FAILED !!!\n"
+        exit 1
+    }
+    -i $secmgr_debug_tool "Are you sure you want to continue connecting (yes/no)? " {
+        send -i $secmgr_debug_tool "yes\r"
+        exp_continue
+    }
+    -i $secmgr_debug_tool "*Secmgr offline test all passed*" {
+        printf "Secmgr test offline update spaik success!\n"
+    }
+    # DummyRead to avoid expect log full from the other world
+    -i $ree "$ " {
+        exp_continue
+    }
+    -i $console "$ " {
+        exp_continue
+    }
+}
+sleep 2
+# offline install exe into HEE
+exec bash -c "$NBL_SDK_PATH/run/otrp/unit_test_script/provision_other_sp.sh -e $NBL_SDK_PATH/test_suite/system/test/secmgr_test/secmgr_test_offline2 -a $env(FUCHSIA_IP)"
+# set the run command in HEE.
+set cmd "nbl_daemon -l a113245f-c6ea-443c-ac1c-458c9fbd5a18"
+
+send -i $ree "$cmd\r"
+
+set timeout 150
+expect {
+    -i $console timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $console "*Secmgr test offline ha2!*" {
+        printf "Secmgr install offline ha2 success!\n"
+    }
+    -i $ree "$ " {
+        exp_continue
+    }
+}
+sleep 2
+printf "Secmgr delete provision sd data!\n"
+#delete provision sd
+spawn ${NBL_SDK_PATH}/run/otrp/unit_test_script/sdk_provision_deletesd.sh $env(FUCHSIA_IP)
+set timeout 30
+expect {
+    -i $console timeout {
+        #Because the test did not return a value, it was temporarily success as a test. If the test fails then the next test will also fail.
+        printf "Secmgr provision delete sd.\n"
+    }
+    -i $console "*ERROR:otrp delete sd failed. sd not found.*" {
+        printf "Failed to delete SD by provision.\n"
+        exit 1
+    }
+    -i $ree "$ " {
+        exp_continue
+    }
+}
+sleep 2
+printf "Secmgr delete normal test data!\n"
+#delete test data
+spawn ${NBL_SDK_PATH}/run/otrp/unit_test_script/sdk_debug_clean.sh $env(FUCHSIA_IP)
+set timeout 30
+set id_clean_test $spawn_id
+expect {
+    -i $id_clean_test timeout {
+        printf "Timeout.\n"
+        exit 1
+    }
+    -i $ree "$ " {
+        exp_continue
+    }
+    -i $console "$ " {
+        exp_continue
+    }
+    -i $id_clean_test "*sdCnt:0*" {
+        printf "Secmgr offline/provision test success!\n"
+    }
+}

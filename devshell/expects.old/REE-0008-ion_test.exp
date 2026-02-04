@@ -1,0 +1,44 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    printf "ignore ion_test for Nebula release build\n"
+    exit 0
+}
+
+set cmd "/system/test/mlvm_app"
+send -i $console "$cmd\r"
+
+sleep 1
+
+set cmd "ion_test"
+send -i $ree "$cmd\r"
+set timeout 60
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "test result: FAIL" {
+        printf "test failed\n"
+        exit 1
+    }
+
+    -i $ree "test result: PASS"
+}
+
+set cmd "nblruncmd killall mlvm_app"
+send -i $ree "$cmd\n"
+set timeout 20
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    # wait for mlvm_app being killed
+    -i $console "$ "
+}

@@ -1,0 +1,2011 @@
+#!/bin/bash
+
+# Copyright 2020 GoldenRiver Technology Co., Ltd. All rights reserved.
+
+# Export Nebula SDK
+
+basepath=$(cd `dirname $0`; pwd)
+set -eE;set -eo pipefail; [[ "${TRACE}" ]] && set -x; [[ "${TRACE_EXP}" ]] && EXPECT_OPT="-d"
+
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly NEBULA_DIR="$(dirname "${SCRIPT_DIR}")"
+
+declare ARG_SDK_HOME=
+declare BUILD_NEBULA="false"
+declare CREATE_SDK="true"
+declare RUN_TEST="true"
+declare SOC_TERM=""
+
+usage() {
+  printf '%s -o <SDK_PATH> [-b|-c] [-N] [-T] [-h]\n' `basename "$0"`
+  printf '  -o <SDK_PATH>   path of saving SDK, if exist, remove it.\n'
+  printf '  [-b|-c]         do Nebula full build or clean build\n'
+  printf '  -N              ignore creating SDK\n'
+  printf '  -T              ignore running test cases\n'
+  printf '  -h              show help.\n'
+  printf '\n'
+  printf 'default action: create SDK and run test cases\n\n'
+}
+
+while getopts "ho:NTbc" opt; do
+  case "${opt}" in
+    o) ARG_SDK_HOME="${OPTARG}" ;;
+    N) CREATE_SDK="false" ;;
+    T) RUN_TEST="false" ;;
+    b) BUILD_NEBULA="full" ;;
+    c) BUILD_NEBULA="clean" ;;
+    h) usage 1>&2 ; exit 0 ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [ -z "$ARG_SDK_HOME" ]; then
+    echo "Please input SDK home, by \"-o\"."
+    usage 1>&1 ; exit 1
+fi
+
+
+### 0. Build Nebula images ###
+if [ "$BUILD_NEBULA" == "clean" ]; then
+  echo ""
+  echo "Start Nebula clean build..."
+  rm -rf ${NEBULA_DIR}/out/*
+  rm -rf ${NEBULA_DIR}/out/.bazel*
+  ${SCRIPT_DIR}/fx set-venus venus-hee
+  ${SCRIPT_DIR}/fx full-build
+elif [ "$BUILD_NEBULA" == "full" ]; then
+  echo ""
+  echo "Start Nebula full build..."
+  ${SCRIPT_DIR}/fx full-build
+fi
+
+
+### 1. Create Nebula SDK ###
+if [ "$CREATE_SDK" == "true" ]; then
+  echo ""
+  echo "Start creating SDK..."
+
+  if [ -d "$ARG_SDK_HOME" ]; then
+      rm -rf $ARG_SDK_HOME
+  fi
+  mkdir -p $ARG_SDK_HOME
+
+  ${SCRIPT_DIR}/fx make-sdk -o $ARG_SDK_HOME
+fi
+
+#### check document ####
+if [ ! -d ${ARG_SDK_HOME}/docs ]; then
+    echo "SDK's docs does NOT exist."
+    exit 1
+fi
+
+if [ ! -d ${ARG_SDK_HOME}/docs/html ]; then
+    echo "SDK's docs/html does NOT exist."
+    exit 1
+fi
+
+
+### 2. build SDK examples ###
+echo ""
+echo "Start building SDK examples..."
+(cd $ARG_SDK_HOME/examples && make clean && make)
+
+
+### 3. run qemu by expect ###
+
+# qemu run in expect, and run test case in HOST.
+# At the end, expect close qemu.
+# NOTICE: all vars in expect should be "\$xxxx", all vars in bash should be "${xxxx}"
+EXPECT_CPID=
+EXPECT_SCRIPT="${ARG_SDK_HOME}/qemu-check.exp"
+SOC_TERM_PATH="${ARG_SDK_HOME}/run/qemu/soc_term"
+
+cat > "${EXPECT_SCRIPT}" << EOF
+#!/usr/bin/expect -f
+
+proc wait_hee_prompt console {
+    sleep 1
+    # clear anything in buffer (i.e. * match anything)
+    expect -i \$console *
+    send -i \$console "\r"
+    sleep 1
+    set timeout 30
+    expect {
+        -i \$console timeout {
+            printf "HEE PROMPT TIMEOUT !!!\n"
+            exit 1
+        }
+
+        -i \$console "$ "
+    }
+    expect -i \$console *
+}
+
+proc wait_ree_prompt console {
+    sleep 1
+    # clear anything in buffer (i.e. * match anything)
+    expect -i \$console *
+    send -i \$console "\r"
+    sleep 1
+    set timeout 30
+    expect {
+        -i \$console timeout {
+            printf "REE PROMPT TIMEOUT !!!\n"
+            exit 1
+        }
+
+        -i \$console "root@FVP:/ "
+    }
+    expect -i \$console *
+}
+
+    proc printf arg {
+        puts -nonewline "\[[clock format [clock seconds] -format %H:%M:%S]\] ([pid]) QEMU-0 \$arg"
+        flush stdout
+    }
+    proc connect_to_world {world mypid} {
+        set port [expr {54000 + (\$mypid % 1000)}]
+        if { \$world eq "tee" } {
+            set port [expr {\$port + 1}]
+        }
+        if { \$world eq "ree" } {
+            set port [expr {\$port + 2}]
+        }
+        set port_found 0
+        while {\$port_found != 1} {
+            spawn sh -c "${SOC_TERM_PATH}/soc_term \$port 2>&1 | tee ${ARG_SDK_HOME}/serial-\$world-\$mypid.log"
+            set spid \$spawn_id
+            set timeout 30
+            expect {
+                timeout {
+                    printf "serial-\$world-\$mypid:\$port connected...\n"
+                    set port_found 1
+                }
+                -i \$spid "soc_term: bind: Address already in use" {
+                    incr port
+                }
+            }
+        }
+        set ret(spid) \$spid
+        set ret(port) \$port
+        return [array get ret]
+    }
+
+    set mypid [pid]
+
+    # Disable echoing of guest output
+    log_user 0
+    # Save guest console output to a file
+    log_file -a -noappend "${ARG_SDK_HOME}/serial-qemu-\$mypid.log"
+
+    array set hee_data [connect_to_world hee \$mypid]
+    set hee \$hee_data(spid)
+    set hee_port \$hee_data(port)
+
+    array set tee_data [connect_to_world tee \$mypid]
+    set tee \$tee_data(spid)
+    set tee_port \$tee_data(port)
+
+    array set ree_data [connect_to_world ree \$mypid]
+    set ree \$ree_data(spid)
+    set ree_port \$ree_data(port)
+
+    set QEMU_SERIAL_FLAGS " -serial tcp:localhost:\$hee_port -serial tcp:localhost:\$tee_port -serial tcp:localhost:\$ree_port"
+
+    printf "starting qemu... \n"
+
+    #################################################################
+    ## start a process to run qemu.
+    spawn bash -c "cd $ARG_SDK_HOME && ./run/run-qemu.sh -t \"\$QEMU_SERIAL_FLAGS\""
+    set qemu \$spawn_id
+    set timeout 30
+    expect {
+        default {
+            printf "run-qemu TIMEOUT or EOF...\n"
+            exit 1
+        }
+        # wait for qemu console is OK. But Nebula system is starting, SDK don't need to input "c".
+        -i \$qemu "(qemu) "
+    }
+
+    # Wait for qemu starts, but should expect the log.
+    set timeout 30
+    expect {
+        -i \$hee timeout {
+            printf "Venus: bootup to shell TIMEOUT !!!\n"
+            exit 1
+        }
+        -i \$hee "\$ "
+    }
+
+    # Wait for hee boot.
+    send -i \$hee "\r"
+    set timeout 40
+    expect {
+        -i \$hee timeout {
+            printf "Venus: sending enter TIMEOUT !!!\n"
+            exit 1
+        }
+        -i \$hee "\$ "
+    }
+
+    # Wait for REE boot.
+    expect -i \$ree "Please press Enter to activate this console."
+    send -i \$ree "\r"
+    sleep 1
+    expect {
+        -i \$ree timeout {
+            printf "Linux bootup TIMEOUT !!!\n"
+            exit 1
+        }
+        -i \$ree "Kernel panic" {
+            printf "Linux kernel panic !!!\n"
+            exit 1
+        }
+        -i \$ree "root@FVP:/ "
+    }
+
+    printf "Wait 5 secs for storage service ready...\n"
+    sleep 5
+
+    printf "REE/HEE are started ... \n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    # close qemu and all terminals.
+exit -onexit {
+    send -i \$qemu "quit\r"
+    wait -i \$qemu
+
+    close -i \$hee
+    wait -i \$hee
+    printf "serial-hee-\$mypid:\$hee_port closed...\n"
+    close -i \$ree
+    wait -i \$ree
+    printf "serial-ree-\$mypid:\$ree_port closed...\n"
+    close -i \$tee
+    wait -i \$tee
+    printf "serial-tee-\$mypid:\$tee_port closed...\n"
+}
+
+    #################################################################
+    #################################################################
+    printf "==> Start to test provision install1:\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/provision_tool/demo.sh && \
+        ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id f3573a54-4af5-4d89-a6f2-11d36aa499d5"
+    set timeout 120
+    set id_provision_test \$spawn_id
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            continue
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+          exp_continue
+        }
+
+        # HA ran.
+        -i \$hee "*hello world.*"
+    }
+    printf "Test 1 succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+    #################################################################
+    sleep 2
+    printf "==> Test cross platform:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/vtrust_cp/vtrust_cp_test && ./debug.sh"
+    set cp_test \$spawn_id
+    set timeout 60
+    expect {
+        -i \$cp_test timeout {
+            printf "Timeout: cross platform test timeout.\n"
+        }
+
+        -i \$cp_test eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$cp_test "$ " {
+            exp_continue
+        }
+
+        -i \$cp_test "*Some tests FAILED*" {
+            printf "Vtrust cross platform TEST FAILED !!!\n"
+            exit 1
+        }
+
+        -i \$cp_test "*All tests PASSED*" {
+            printf "Vtrust cross platform TEST SUCCESS !!!\n"
+        }
+    }
+    printf "Test 1-1 cross platform succeeds.\n"
+    ################################################################
+    printf "Test 1-2 provision update sd privilege(tui) ignored.\n"
+    # printf "==> Start to test provision update sd privilege(tui):\n"
+    # spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_provision_update_sd_privilege.sh && \
+    #     ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id 0e9026cb-3dfd-4b5a-98f1-44765cdf5171"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*" {
+    #         printf "Failed, no privilege.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test failed:*" {
+    #         printf "Failed, some error happened.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test success.*"
+    # }
+    # printf "Test 1-2 provision update sd privilege(tui) succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test secmgr provision delete sd test.\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_provision_deletesd.sh"
+    set timeout 30
+    expect {
+        -i \$hee timeout {
+            #Because the test did not return a value, it was temporarily success as a test. If the test fails then the next test will also fail.
+            printf "Secmgr provision delete sd.\n"
+        }
+
+        -i \$hee "*ERROR:otrp delete sd failed. sd not found.*" {
+            printf "Failed to delete SD by provision.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            continue
+        }
+    }
+    printf "Test 2 secmgr provision delete sd succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test secmgr provision convert debug test.\n"
+        spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_provision_convert_debug.sh"
+    set timeout 30
+    set id_provision_test \$spawn_id
+    expect {
+        -i \$id_provision_test timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$id_provision_test "*SDK test provision convert debug test failed.*" {
+            printf "Test secmgr provision convert debug failed.\n"
+            exit 1
+        }
+
+        -i \$id_provision_test "*sdk_test_provision_convert_debug success.*"
+    }
+    printf "Test 3 secmgr provision convert debug succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test secmgr provision ha by config file.\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_provision_ha_by_config.sh && \
+        ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id f3573a54-4af5-4d89-a6f2-11d36aa499d5"
+    set timeout 30
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee "*ERROR:otrp update ta failed.*" {
+            printf "Install provosion ha failed. The same name HA exists in other security domains.\n"
+            exit 1
+        }
+
+        -i \$hee "*ERROR:otrp install ta failed. ta already installed.*" {
+            printf "Install provosion ha failed. The same name HA exists in other security domains.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            continue
+        }
+
+        # HA ran.
+        -i \$hee "*hello world.*"
+    }
+    printf "Test 4 secmgr provision ha by config file succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test 4-1 debug update sd privilege(tui) ignored.\n"
+    # printf "==> Test debug update sd privilege(tui):\n"
+    # spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/tui_allow && make run-qemu PRIVILEGE_DEFAULT=1"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*" {
+    #         printf "Failed, no privilege.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test failed:*" {
+    #         printf "Failed, some error happened.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test success.*"
+    # }
+    # printf "Test 4-1 debug update sd privilege(tui) succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test secmgr provision config delete sd test.\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_provision_config_deletesd.sh"
+    set timeout 30
+    expect {
+        -i \$hee timeout {
+            #Because the test did not return a value, it was temporarily success as a test. If the test fails then the next test will also fail.
+            printf "Secmgr provision config delete sd.\n"
+        }
+
+        -i \$hee "*ERROR:otrp delete sd failed. sd not found.*" {
+            printf "Failed to delete SD by provision.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            continue
+        }
+    }
+    printf "Test 5 secmgr provision config delete sd succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+
+    printf "==> Start to test make provision-run-qemu:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/hee/libc && make && make provision-run-qemu"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            continue
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        # HA ran.
+        -i \$hee "*hello world*"
+    }
+    printf "Test 5-0 succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+    #################################################################
+    printf "Test secmgr provision config delete sd test2.\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_provision_config_deletesd.sh"
+    set timeout 30
+    expect {
+        -i \$hee timeout {
+            #Because the test did not return a value, it was temporarily success as a test. If the test fails then the next test will also fail.
+            printf "Secmgr provision config delete sd.\n"
+        }
+
+        -i \$hee "*ERROR:otrp delete sd failed. sd not found.*" {
+            printf "Failed to delete SD by provision.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            continue
+        }
+    }
+    printf "Test 5-01 secmgr provision config delete sd succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test 5-1 provision create sd by config ignored.\n"
+    # printf "Test provision create sd by config.\n"
+    # spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_provision_create_sd_by_config.sh && \
+    #     ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id 0e9026cb-3dfd-4b5a-98f1-44765cdf5171"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*" {
+    #         printf "Failed, no privilege.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test failed:*" {
+    #         printf "Failed, some error happened.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test success.*"
+    # }
+    # printf "Test 5-1 provision create sd by config succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test secmgr sign ha.\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_sign_ha.sh"
+    set timeout 30
+    set id_sign_ha_test \$spawn_id
+    expect {
+        -i \$id_sign_ha_test timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$id_sign_ha_test "*Test sdk sign ha failed!*" {
+            printf "Test secmgr sign ha failed.\n"
+            exit 1
+        }
+
+        -i \$id_sign_ha_test "*Test sdk sign ha success!*"
+    }
+    printf "Test 6 secmgr sign ha succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test secmgr debug ha.\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_debug_ha.sh"
+    set timeout 30
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee "*ERROR:otrp update ta failed.*" {
+            printf "Install debug ha failed. The same name HA exists in other security domains.\n"
+            exit 1
+        }
+
+        -i \$hee "*ERROR:otrp install ta failed. ta already installed.*" {
+            printf "Install debug ha failed. The same name HA exists in other security domains.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            continue
+        }
+
+        # HA run.
+        -i \$hee "*hello world.*"
+    }
+    printf "Test 7 secmgr debug ha succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test secmgr ls.\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_debug_ls.sh"
+    set timeout 30
+    set id_ls_test \$spawn_id
+    expect {
+        -i \$id_ls_test timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$id_ls_test "*sd list is null*" {
+            printf "Test ls failed. SD list is null.\n"
+            exit 1
+        }
+
+        -i \$id_ls_test "*sdCnt:2*"
+    }
+    printf "Test 8 ls succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test secmgr delete.\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_debug_delete.sh"
+    set timeout 30
+    set id_debug_delete_test \$spawn_id
+    expect {
+        -i \$id_debug_delete_test timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$id_debug_delete_test "*sd list is null*" {
+            printf "Test ls failed. SD list is null.\n"
+            exit 1
+        }
+
+        -i \$id_debug_delete_test "*sdCnt:1*"
+    }
+    printf "Test 9 delete succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test secmgr clean.\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/unit_test_script/sdk_debug_clean.sh"
+    set timeout 30
+    set id_clean_test \$spawn_id
+    expect {
+        -i \$id_clean_test timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$id_clean_test "*sd list is null*"
+    }
+    printf "Test 10 clean succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    #################################################################
+    printf "==> Start to test provision install:\n"
+    spawn bash -c "set -e && ${ARG_SDK_HOME}/run/otrp/provision_tool/demo.sh && \
+        ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id f3573a54-4af5-4d89-a6f2-11d36aa499d5"
+    set timeout 120
+    set id_provision_test \$spawn_id
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            continue
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+          exp_continue
+        }
+
+        # HA ran.
+        -i \$hee "*hello world.*"
+    }
+    printf "Test 11 succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+
+    printf "==> Start to test provision of new-process ta allow, sd allow:\n"
+    spawn bash -c "set -e \
+        && ${ARG_SDK_HOME}/run/otrp/provision_tool/demo.sh \
+            -e ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_allow/out/test-new_process \
+            --delete_sd --privilege_file ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_allow/sd.privilege.allow \
+        && ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id 1c714264-2518-425d-afce-d1c893b8fce8"
+    set timeout 120
+    set id_provision_test \$spawn_id
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Failed. Access denied*" {
+            printf "Failed, no privilege.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Success.*"
+    }
+    printf "Test 12 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test provision of new-process ta allow, sd forbid:\n"
+    spawn bash -c "set -e \
+        && ${ARG_SDK_HOME}/run/otrp/provision_tool/demo.sh \
+            -e ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_allow/out/test-new_process \
+            --delete_sd --privilege_file ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_allow/sd.privilege.forbid \
+        && ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id 1c714264-2518-425d-afce-d1c893b8fce8"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 13 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test provision of new-process ta allow, no sd privilege:\n"
+    spawn bash -c "set -e \
+        && ${ARG_SDK_HOME}/run/otrp/provision_tool/demo.sh \
+            -e ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_allow/out/test-new_process \
+            --delete_sd \
+        && ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id 1c714264-2518-425d-afce-d1c893b8fce8"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 14 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test provision of new-process ta forbid, sd allow:\n"
+    spawn bash -c "set -e \
+        && ${ARG_SDK_HOME}/run/otrp/provision_tool/demo.sh \
+            -e ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_forbid/out/test-new_process \
+            --delete_sd --privilege_file ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_forbid/sd.privilege.allow \
+        && ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id 1c714264-2518-425d-afce-d1c893b8fce8"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 15 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test provision of new-process ta forbid, sd forbid:\n"
+    spawn bash -c "set -e \
+        && ${ARG_SDK_HOME}/run/otrp/provision_tool/demo.sh \
+            -e ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_forbid/out/test-new_process \
+            --delete_sd --privilege_file ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_allow/sd.privilege.forbid \
+        && ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id 1c714264-2518-425d-afce-d1c893b8fce8"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 16 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test provision of new-process ta forbid, no sd privilege:\n"
+    spawn bash -c "set -e \
+        && ${ARG_SDK_HOME}/run/otrp/provision_tool/demo.sh \
+            -e ${ARG_SDK_HOME}/examples/security_domain/prov_new-process_forbid/out/test-new_process \
+            --delete_sd \
+        && ${ARG_SDK_HOME}/run/otrp/debug_tool/secmgr_run_ha.sh --ha_id 1c714264-2518-425d-afce-d1c893b8fce8"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 17 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    #################################################################
+    printf "==> Start to test normal install:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/hee/math && make run-qemu"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            continue
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        # HA ran.
+        -i \$hee "*sin(1) + cos(1) =  0.841471 + 0.540302 = 1.381773*"
+    }
+    printf "Test 18 succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test 19 TUI ignored.\n"
+    # printf "==> Test TUI ta allow, sd allow:\n"
+    # spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/tui_allow && make delete-sd && make run-qemu SD_ALLOW=1"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*" {
+    #         printf "Failed, no privilege.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test failed:*" {
+    #         printf "Failed, some error happened.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test success.*"
+    # }
+    # printf "Test 19 TUI succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test 20 TUI ignored.\n"
+    # printf "==> Test TUI ta allow, sd forbid:\n"
+    # spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/tui_allow && make delete-sd && make run-qemu SD_ALLOW=0"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*"
+    # }
+    # printf "Test 20 TUI succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test 21 TUI ignored.\n"
+    # printf "==> Test TUI ta allow, no sd privilege:\n"
+    # spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/tui_allow && make delete-sd && make run-qemu NO_PRIVILEGE=1"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*"
+    # }
+    # printf "Test 21 TUI succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test 22 TUI ignored.\n"
+    # printf "==> Test TUI ta allow, default sd privilege:\n"
+    # spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/tui_allow && make delete-sd && make run-qemu"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*" {
+    #         printf "Failed, no privilege.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test failed:*" {
+    #         printf "Failed, some error happened.\n"
+    #         exit 2
+    #     }
+
+    #     -i \$hee "*TUI test success.*"
+    # }
+    # printf "Test 22 TUI succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test 23 TUI ignored.\n"
+    # printf "==> Test TUI ta forbid, sd allow:\n"
+    # spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/tui_forbid && make delete-sd && make run-qemu SD_ALLOW=1"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*"
+    # }
+    # printf "Test 23 TUI succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test 24 TUI ignored.\n"
+    # printf "==> Test TUI ta forbid, sd forbid:\n"
+    # spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/tui_forbid && make delete-sd && make run-qemu SD_ALLOW=0"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*"
+    # }
+    # printf "Test 24 TUI succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "Test 25 TUI ignored.\n"
+    # printf "==> Test TUI ta forbid, no sd privilege:\n"
+    # spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/tui_forbid && make delete-sd && make run-qemu"
+    # set id_normal_test \$spawn_id
+    # set timeout 120
+    # expect {
+    #     -i \$hee timeout {
+    #         printf "Timeout.\n"
+    #         exit 1
+    #     }
+
+    #     -i \$hee eof {
+    #         printf "EOF.\n"
+    #         exit 1
+    #     }
+
+    #     # DummyRead to avoid expect log full from the other world
+    #     -i \$ree "$ " {
+    #         exp_continue
+    #     }
+
+    #     -i \$hee "*-2, Failed to initialize nbl_gui engine*"
+    # }
+    # printf "Test 25 TUI succeeds.\n"
+
+    # wait_hee_prompt \$hee
+    # wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test new-process ta allow, sd allow:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/new-process_allow && make delete-sd && make run-qemu SD_ALLOW=1"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Failed. Access denied*" {
+            printf "Failed, no privilege.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Success.*"
+    }
+    printf "Test 26 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test new-process ta allow, sd forbid:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/new-process_allow && make delete-sd && make run-qemu SD_ALLOW=0"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 27 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test new-process ta allow, no sd privilege:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/new-process_allow && make delete-sd && make run-qemu NO_PRIVILEGE=1"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 28 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test new-process ta allow, sd default :\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/new-process_allow && make delete-sd && make run-qemu"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Failed. Access denied*" {
+            printf "Failed, no privilege.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Success.*"
+    }
+    printf "Test 29 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test new-process ta forbid, sd allow:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/new-process_forbid && make delete-sd && make run-qemu SD_ALLOW=1"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 30 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test new-process ta forbid, sd forbid:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/new-process_forbid && make delete-sd && make run-qemu SD_ALLOW=0"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 31 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test new-process ta forbid, no sd privilege:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/new-process_forbid && make delete-sd && make run-qemu NO_PRIVILEGE=1"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but start new process.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 32 new-process succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test call-trusty-api ta allow, sd allow:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/trusty-api_allow && make delete-sd && make run-qemu SD_ALLOW=1"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Failed. Access denied*" {
+            printf "Failed, no privilege.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Success.*"
+    }
+    printf "Test 33 call-trusty-api succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test call-trusty-api ta allow, sd forbid:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/trusty-api_allow && make delete-sd && make run-qemu SD_ALLOW=0"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but call trusty-api.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 34 call-trusty-api succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test call-trusty-api ta allow, no sd privilege:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/trusty-api_allow && make delete-sd && make run-qemu NO_PRIVILEGE=1"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Failed. Access denied*" {
+            printf "Failed, no privilege.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Success.*"
+    }
+    printf "Test 35 call-trusty-api succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test call-trusty-api ta forbid, sd allow:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/trusty-api_forbid && make delete-sd && make run-qemu SD_ALLOW=1"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but call trusty-api.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 36 call-trusty-api succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test call-trusty-api ta forbid, sd forbid:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/trusty-api_forbid && make delete-sd && make run-qemu SD_ALLOW=0"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but call trusty-api.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 37 call-trusty-api succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    printf "==> Test call-trusty-api ta forbid, no sd privilege:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/trusty-api_forbid && make delete-sd && make run-qemu"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but call trusty-api.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. unknown error=*" {
+            printf "Failed, some error happened.\n"
+            exit 2
+        }
+
+        -i \$hee "*Failed. Access denied*"
+    }
+    printf "Test 38 call-trusty-api succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    sleep 2
+    printf "==> Test auto-start ta allow, sd allow:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/auto-start_allow && make delete-sd && make install-qemu SD_ALLOW=1"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*"
+    }
+    printf "Test 39 auto-start succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    sleep 2
+    printf "==> Test auto-start ta allow, sd forbid:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/auto-start_allow && make delete-sd && make install-qemu SD_ALLOW=0"
+    set id_normal_test \$spawn_id
+    set timeout 30
+    expect {
+        -i \$hee timeout {
+            printf "Timeout: not-auto-start.\n"
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but auto-start.\n"
+            exit 1
+        }
+    }
+    printf "Test 40 auto-start succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    sleep 2
+    printf "==> Test auto-start ta allow, no sd privilege:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/auto-start_allow && make delete-sd && make install-qemu NO_PRIVILEGE=1"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*"
+    }
+    printf "Test 41 auto-start succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    sleep 2
+    printf "==> Test auto-start ta allow, default sd privilege:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/auto-start_allow && make delete-sd && make install-qemu"
+    set id_normal_test \$spawn_id
+    set timeout 120
+    expect {
+        -i \$hee timeout {
+            printf "Timeout.\n"
+            exit 1
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*"
+    }
+    printf "Test 42 auto-start succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    sleep 2
+    printf "==> Test auto-start ta forbid, sd allow:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/auto-start_forbid && make delete-sd && make install-qemu SD_ALLOW=1"
+    set id_normal_test \$spawn_id
+    set timeout 30
+    expect {
+        -i \$hee timeout {
+            printf "Timeout: not-auto-start.\n"
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but auto-start.\n"
+        }
+    }
+    printf "Test 43 auto-start succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    sleep 2
+    printf "==> Test auto-start ta forbid, sd forbid:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/auto-start_forbid && make delete-sd && make install-qemu SD_ALLOW=0"
+    set id_normal_test \$spawn_id
+    set timeout 30
+    expect {
+        -i \$hee timeout {
+            printf "Timeout: not-auto-start.\n"
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but auto-start.\n"
+        }
+    }
+    printf "Test 44 auto-start succeeds.\n"
+
+    wait_hee_prompt \$hee
+    wait_ree_prompt \$ree
+
+    #################################################################
+    sleep 2
+    printf "==> Test auto-start ta forbid, no sd privilege:\n"
+    spawn bash -c "cd ${ARG_SDK_HOME}/examples/security_domain/auto-start_forbid && make delete-sd && make install-qemu"
+    set id_normal_test \$spawn_id
+    set timeout 50
+    expect {
+        -i \$hee timeout {
+            printf "Timeout: not-auto-start.\n"
+        }
+
+        -i \$hee eof {
+            printf "EOF.\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i \$ree "$ " {
+            exp_continue
+        }
+
+        -i \$hee "*Success.*" {
+            printf "Failed, has no privilege, but auto-start.\n"
+        }
+    }
+    printf "Test 45 auto-start succeeds.\n"
+
+    #################################################################
+
+EOF
+
+dumplog() {
+  while IFS= read -r line
+  do
+    echo "$line"
+  done < "$1"
+}
+
+clean_sdk() {
+  echo ""
+  echo "Cleaning SDK..."
+  cd $ARG_SDK_HOME/examples && make clean
+  rm -f ${EXPECT_SCRIPT}
+  rm -f ${ARG_SDK_HOME}/*.log
+}
+
+if [ "$RUN_TEST" == "false" ]; then
+  echo ""
+  echo "Ignore running test cases."
+else
+  echo ""
+  echo "Start running test cases..."
+
+  exec expect ${EXPECT_OPT} ${EXPECT_SCRIPT} & EXPECT_CPID="$!"
+  wait -n "${EXPECT_CPID}" || exp_err="true"
+  if [[ "${exp_err}" = "true" ]]; then
+    qemulog="${ARG_SDK_HOME}/serial-qemu-${EXPECT_CPID}.log"
+    heelog="${ARG_SDK_HOME}/serial-hee-${EXPECT_CPID}.log"
+    reelog="${ARG_SDK_HOME}/serial-ree-${EXPECT_CPID}.log"
+    teelog="${ARG_SDK_HOME}/serial-tee-${EXPECT_CPID}.log"
+    echo "== ${PWD}/${qemulog}:"; dumplog "${qemulog}"; echo "== end of ${PWD}/${qemulog}:"
+    echo "== ${PWD}/${teelog}:"; dumplog "${teelog}"; echo "== end of ${PWD}/${teelog}:"
+    echo "== ${PWD}/${heelog}:"; dumplog "${heelog}"; echo "== end of ${PWD}/${heelog}:"
+    echo "== ${PWD}/${reelog}:"; dumplog "${reelog}"; echo "== end of ${PWD}/${reelog}:"
+
+    echo ""
+    echo "Test FAILED"
+
+    clean_sdk
+    exit 1
+  fi
+
+  echo ""
+  echo "Test OK"
+fi
+
+clean_sdk
+

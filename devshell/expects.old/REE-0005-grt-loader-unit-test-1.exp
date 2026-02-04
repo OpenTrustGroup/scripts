@@ -1,0 +1,26 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # This test is for "load_ha_by_path" which is NOT in release.
+} else {
+    ####test ree loader
+    set cmd "ta-loader_test -u 0"
+    send -i $ree "$cmd\r"
+    set timeout 220
+    # [  FAILED  ] taloader-unittest: xxx: Some tests FAILED
+    # success:
+    # [  PASSED  ] taloader-unittest: xxx: All tests PASSED
+    expect {
+        -i $ree timeout {
+            printf "TIMEOUT !!!\n"
+            exit 1
+        }
+        -i $ree {taloader-unittest: *: Some tests FAILED} {
+            printf "$cmd FAILED !!!\n"
+            exit 1
+        }
+        # DummyRead to avoid expect log full from the other world
+        -i $console "$ " {
+            exp_continue
+        }
+        -i $ree {taloader-unittest: *: All tests PASSED}
+    }
+}

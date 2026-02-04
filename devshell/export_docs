@@ -1,0 +1,234 @@
+#!/usr/bin/env python
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+from openpyxl import load_workbook
+import os
+import shutil
+import sys
+import getopt
+
+'''
+In ubuntu these packages:
+
+sudo apt install python-pip
+pip install openpyxl
+
+must be installed.
+'''
+
+# Please change the following values when index.xlsx structure changed.
+
+# Configuration sheet name.
+SHEET_NAME = "doc"
+
+# Row 1 is column titles. So scan from row 2.
+DOC_ROW_BEGIN = 2
+
+# Level 1 titles column.
+LEVEL_ONE_TITLE_COLUMN_INDEX = 1
+
+# Level 2 titles column.
+LEVEL_TWO_TITLE_COLUMN_INDEX = 2
+
+# Document name column index.
+DOC_NAME_COLUMN_INDEX = 3
+
+# Document file path column index.
+DOC_FILE_COLUMN_INDEX = 4
+
+# Type name column beginning index.
+EXPORT_TYPE_COLUMN_BEGIN = 5
+
+def showUsage():
+    print 'Usage:'
+    print os.path.basename(sys.argv[0]) + '[options]... [value]...'
+    print 'options:'
+    print '-t, --type    Documents type. It can be found in index.xlsx.'
+    print '-i, --index   File path of the file index.xlsx.'
+    print '-o, --output  Path of the output dir.'
+
+'''
+Use these arguments:
+
+exxport_docs.py \
+-t PATAC  \
+-i /home/zhoubo/develop/leo/fuchsia_workspace/nebula/docs/nebula/design/index.xlsx \
+-o /home/zhoubo/develop/leo/fuchsia_workspace/nebula/docs/nebula/design \
+-s doc
+
+will set these variables:
+
+g_exportType = 'PATAC'
+g_indexPath = '/home/zhoubo/develop/leo/fuchsia_workspace/nebula/docs/nebula/design/index.xlsx'
+g_exportPrefix = '/home/zhoubo/develop/leo/fuchsia_workspace/nebula/docs/nebula/design'
+g_sheet = 'doc'
+'''
+g_exportType = None
+g_indexPath = None
+g_exportPrefix = None
+g_sheet = None
+
+opts, args = getopt.getopt(sys.argv[1:], 't:i:o:s:', ['type=', 'index=', 'output=', 'sheet='])
+for optName, optValue in opts:
+    if optName in ('-t', '--type'):
+        g_exportType = optValue
+    elif optName in ('-i', '--index'):
+        g_indexPath = optValue
+    elif optName in ('-o', '--output'):
+        g_exportPrefix = optValue
+    elif optName in ('-s', '--sheet'):
+        g_sheet = optValue
+    else:
+        print 'Unknown option ' + optName
+        showUsage()
+
+if g_exportType == None:
+    print '-t, --type Can not be None.'
+    showUsage()
+    exit(1)
+
+if g_indexPath == None:
+    print '-i, --index Can not be None.'
+    showUsage()
+    exit(1)
+
+if g_exportPrefix == None:
+    print '-o, --output Can not be None.'
+    showUsage()
+    exit(1)
+
+if g_sheet == None:
+    g_sheet = SHEET_NAME
+
+g_indexDir = os.path.dirname(g_indexPath)
+g_exportDir = os.path.join(g_exportPrefix, g_exportType)
+g_exportIndexPath = os.path.join(g_exportDir, os.path.basename(g_indexPath))
+
+g_indexWB = load_workbook(g_indexPath)
+g_indexWS = g_indexWB[g_sheet]
+
+def findTypeColIndex(exportType):
+    result = None
+    typeColIndex = EXPORT_TYPE_COLUMN_BEGIN
+    while g_indexWS.cell(1, typeColIndex).value:
+        curType = g_indexWS.cell(1, typeColIndex).value
+        if curType == g_exportType: #Find the colum which is named exportType
+            result = typeColIndex
+            break
+        typeColIndex = typeColIndex + 1
+    return result
+
+def deleteAllTypeCols():
+    typeColIndex = EXPORT_TYPE_COLUMN_BEGIN
+    while g_indexWS.cell(1, typeColIndex).value:
+        print "Deleting colum: " + g_indexWS.cell(1, typeColIndex).value
+        g_indexWS.delete_cols(typeColIndex, 1)
+
+def mergeCells(cellValue, startRow, endRow, columIndex):
+    for curRow in range(startRow, endRow):
+        g_indexWS.cell(curRow, columIndex).value = None
+    g_indexWS.merge_cells(start_row = startRow, start_column = columIndex, end_row = endRow - 1, end_column = columIndex)
+    g_indexWS.cell(startRow, columIndex).value = cellValue
+
+def mergeSameRows(rowBeginIndex, rowEndIndex, columIndex):
+    curRow = rowBeginIndex
+    cellAIndex = curRow
+    cellA = g_indexWS.cell(curRow, columIndex).value
+    cellBIndex = cellAIndex
+    for curRow in range(rowBeginIndex, rowEndIndex + 2):
+        cellValue = g_indexWS.cell(curRow, columIndex).value
+        if cellA == cellValue: # If two cells is same, mark it B.
+            cellBIndex = curRow
+        else:
+            if cellBIndex != cellAIndex: # At least two cells are same. Merge them.
+                if cellA != None: # Ignore NULL cell.
+                    print "Merging cell " + cellA
+                    mergeCells(cellA, cellAIndex, curRow, columIndex)
+            cellAIndex = curRow;
+            cellA = cellValue;
+            cellBIndex = cellAIndex
+        curRow = curRow + 1
+
+def fixLinkCells(rowBeginIndex, rowEndIndex):
+    for curRow in range(rowBeginIndex, rowEndIndex):
+        linkCellIndex = curRow
+        linkCell = g_indexWS.cell(curRow, DOC_FILE_COLUMN_INDEX)
+        linkCellText = linkCell.value
+        if linkCellText != None:
+            print "fixing link " + linkCellText
+            linkCell.hyperlink = linkCellText
+        curRow = curRow + 1
+
+g_matchTypeIndex = findTypeColIndex(g_exportType)
+if g_matchTypeIndex == None:
+    print "Can not find the matched type colum. Please check input type name."
+    exit(1)
+
+# Export all documents which is marked 'Y' in type column.
+docRowIndex = DOC_ROW_BEGIN
+needStop = False
+while needStop != True:
+    docName = g_indexWS.cell(docRowIndex, DOC_NAME_COLUMN_INDEX).value
+    docFileName = g_indexWS.cell(docRowIndex, DOC_FILE_COLUMN_INDEX).value
+    needExport = g_indexWS.cell(docRowIndex, g_matchTypeIndex).value
+    if docName != None:
+        if needExport != None and needExport.upper() == 'Y':
+            if not os.path.exists(g_exportDir):
+                print 'Making dir ' + g_exportDir
+                os.makedirs(g_exportDir)
+            srcDocPath = os.path.join(g_indexDir, docFileName)
+            destDocPath = os.path.join(g_exportDir, docFileName)
+            if os.path.exists(srcDocPath):
+                print 'Exporting ' + docName + ' ' + destDocPath
+                shutil.copyfile(srcDocPath, destDocPath)
+            else:
+                needStop = True
+                print "File " + srcDocPath + " not exists."
+                exit(1)
+    else:
+        needStop = True
+    docRowIndex = docRowIndex + 1
+
+# Export index.xlsx.
+print 'Exporting ' + os.path.basename(g_indexPath)
+
+# Delete rows and columns which are not needed.
+docRowIndex = DOC_ROW_BEGIN
+needStop = False
+while needStop != True:
+    docName = g_indexWS.cell(docRowIndex, DOC_NAME_COLUMN_INDEX).value
+    docFileName = g_indexWS.cell(docRowIndex, DOC_FILE_COLUMN_INDEX).value
+    needExport = g_indexWS.cell(docRowIndex, g_matchTypeIndex).value
+    needIncrease = True
+    if docName != None:
+        if needExport == None or needExport.upper() != 'Y':
+            print "Deleting row: " + docName + " " + docFileName
+            g_indexWS.delete_rows(docRowIndex, 1)
+            needIncrease = False
+    else:
+        needStop = True
+
+    if needIncrease == True:
+        docRowIndex = docRowIndex + 1
+
+deleteAllTypeCols()
+
+g_curMaxRow = g_indexWS.max_row
+
+# Merge all the same rows.
+mergeSameRows(DOC_ROW_BEGIN, g_curMaxRow, LEVEL_ONE_TITLE_COLUMN_INDEX)
+mergeSameRows(DOC_ROW_BEGIN, g_curMaxRow, LEVEL_TWO_TITLE_COLUMN_INDEX)
+mergeSameRows(DOC_ROW_BEGIN, g_curMaxRow, DOC_NAME_COLUMN_INDEX)
+
+# After deleting rows, some hyperlinks will be destroyed. Here fix them.
+fixLinkCells(DOC_ROW_BEGIN, g_curMaxRow)
+
+# Delete unused sheets.
+for sheetName in g_indexWB.sheetnames:
+    if sheetName != g_sheet:
+        print "Removing sheet: " + sheetName
+        g_indexWB.remove(g_indexWB[sheetName])
+
+print "Saving " + g_exportIndexPath
+g_indexWB.save(g_exportIndexPath)
+
+print "Export documents success."

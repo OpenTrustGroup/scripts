@@ -1,0 +1,114 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Make a summary about image in NEBULA.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+echo "Start to sumarize the image ..."
+
+# $1: mesasge to output
+# $2~: source folders.
+function sum_source()
+{
+    echo -e "\n$1" | tee -a $OUTPUT_FILE
+    shift
+    echo "Include: $*" | tee -a $OUTPUT_FILE
+    cloc ${CLOC_FLAGS} --report-file=${OUTPUT_FILE}.tmp $*
+    cat ${OUTPUT_FILE}.tmp | grep -v "Wrote" | grep -v "AlDanial" | tee -a ${OUTPUT_FILE}
+}
+
+# Summarize the files in image.
+# $1: title
+# $2~: manifest file.
+function sum_files_in_image()
+{
+    echo -e "\n"$1
+    cd $FUCHSIA_OUT_DIR/arm64
+
+    shift 1
+
+    sys_sum=0
+    boot_sum=0
+    prefix=""
+
+    for manifest in $*; do
+        if [[ "$manifest" =~ .*boot\.manifest.* ]]; then
+            prefix="/boot/"
+        else
+            prefix="/system/"
+        fi
+
+        while read line; do
+            items=(`echo $line | awk -F '=' '{print $1 " " $2}'`)
+            to=${items[0]}
+            from=${items[1]}
+
+            if [ ! -e ${from} ]; then
+                echo "cannot find file \"${from}\"."
+                exit 0
+            fi
+            size=`du -s -b ${from} | awk '{print $1}'`
+
+            if [ $prefix = '/boot/' ]; then
+                boot_sum=$((${boot_sum} + ${size}))
+            else
+                sys_sum=$((${sys_sum} + ${size}))
+            fi
+            echo "${prefix}${to}, ${items[1]}, ${size}" | tee -a $out
+        done < $manifest
+    done
+
+    echo -e "\nSum of files:"
+    echo "boot : $boot_sum"
+    echo "system : $sys_sum"
+    echo "Sum : " $((${boot_sum}+${sys_sum}))
+}
+
+# Summarize the information of image.
+# $2 : message
+function sum_image()
+{
+    if [ $1 = 'debug' ]; then
+        suffix=""
+        build_suffix=""
+    else
+        suffix=".rel"
+        build_suffix="-release"
+    fi
+
+    RAM_DISK=${FUCHSIA_OUT_DIR}/arm64/user.bootfs${suffix}
+    ram_size=`du -s -b ${RAM_DISK} | awk '{print $1}'`
+
+    KERNEL_DISK=${FUCHSIA_OUT_DIR}/build-zircon${build_suffix}/build-venus-hee/qemu-zircon.bin
+    kernel_size=`du -s -b ${KERNEL_DISK} | awk '{print $1}'`
+
+    echo -e "\nCompressed image's size of \"$1\":\nkernel : ${kernel_size}\nramdisk : ${ram_size}"
+}
+
+function main()
+{
+    rm -rf $OUTPUT_FILE
+
+    echo "Summary at `date -R`"
+
+    sum_files_in_image "====================\nImage of Debug Build" \
+            ${FUCHSIA_OUT_DIR}/arm64/boot.manifest ${FUCHSIA_OUT_DIR}/arm64/system.manifest
+    sum_image debug
+
+    sum_files_in_image "======================\nImage of Release Build" \
+            ${FUCHSIA_OUT_DIR}/arm64/boot.manifest.rel ${FUCHSIA_OUT_DIR}/arm64/system.manifest.rel
+    sum_image release
+}
+
+# Only summarize the source which staff of GRT changed.
+OUTPUT_FILE=$FUCHSIA_OUT_DIR/arm64/summary.image.txt
+
+main  | tee -a $OUTPUT_FILE
+
+echo -e "The summary is OK.\nReport is at \"${OUTPUT_FILE}\"."

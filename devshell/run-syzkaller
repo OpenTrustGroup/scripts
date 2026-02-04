@@ -1,0 +1,1041 @@
+#!/bin/bash
+# Copyright 2019 GoldenRiver Inc.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### Run syz-manager
+## usage: fx run-syzkaller [options] -t target
+##  -t  run syzkaller on specified target
+##       - nebula                      : device loaded w/ debug nebula image, runs in fuzzer mode
+##       - cepheus-dbg-tw              : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - cepheus-dbg-sy              : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - p80-dbg                     : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - p60-dbg                     : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - p60-tee-dbg                 : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - p60-tee-benchmark-dbg       : device flashed w/ debug nebula image, runs benchmark tests in oneshot mode
+##       - urovo-tee-dbg               : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - urovo-tee-benchmark-dbg     : device flashed w/ debug nebula image, runs benchmark tests in oneshot mode
+##       - p85-tee-dbg                 : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - p85-tee-benchmark-dbg       : device flashed w/ debug nebula image, runs benchmark tests in oneshot mode
+##       - imx8qxp-linux-dbg           : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - imx8qxp-tee-dbg             : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - imx8qxp-tee-benchmark-dbg   : device flashed w/ debug nebula image, runs benchmark tests in oneshot mode
+##       - imx8qm-tee-dbg              : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - imx8qm-tee-benchmark-dbg    : device flashed w/ debug nebula image, runs benchmark tests in oneshot mode
+##       - ecarx-dbg                   : device flashed w/ debug nebula image, runs debug tests in oneshot mode
+##       - ecarx-tee-benchmark-dbg : device flashed w/ debug nebula image, runs benchmark tests in oneshot mode
+##  -u  run specified syzkaller tests, ex. -u pkg/mgrconfig
+##  -v  num  verbosity
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+readonly ROOT_DIR="$(dirname "${SCRIPT_DIR}")"
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+function usage {
+  fx-command-help
+  exit 1
+}
+
+while getopts "t:u:v:" opt; do
+  case "${opt}" in
+    t) TARGET="${OPTARG}" ;;
+    u) GOTESTPATH="${OPTARG}" ;;
+    v) VERBOSE="${OPTARG}" ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+declare VERBOSE="${VERBOSE:-0}"
+declare GOTEST="${GOTEST:-0}"
+
+export GOROOT="${FUCHSIA_OUT_DIR}/syzkaller/go"
+export GOPATH="${FUCHSIA_OUT_DIR}/syzkaller"
+export SYZKALLER_GOROOT=${GOPATH}/src/github.com/google/syzkaller
+export PATH=${GOROOT}/bin:${PATH}
+
+if [[ -n "${GOTESTPATH}" ]]; then
+  cd ${SYZKALLER_GOROOT}/${GOTESTPATH}
+  go test
+  cd -
+  exit 0
+fi
+
+declare CFG="${FUCHSIA_BUILD_DIR}/${TARGET}.syzkaller.cfg"
+
+case ${TARGET} in
+nebula)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "fuchsia/arm64",
+	"http": "localhost:8989",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sshkey": "${FUCHSIA_BUILD_DIR}/ssh-keys/id_ed25519",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"type": "nebula"
+}
+EOF
+;;
+cepheus-ut-dbg-tw)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18900",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "cepheus",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0003-storage-unittest-tdea-dbg.cfg",
+		"NBL-0003-storage-unittest-tp-dbg.cfg",
+		"NBL-0010-secmgr-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0100-grt-secmgr-unit-test.cfg"
+	],
+	"vm": {
+		"console": "adb",
+		"devices": ["45fdafd8"],
+		"partitions": ["ifaa"],
+		"images": ["bootdata-combo-qcomv8-cepheus-signed.bin"],
+		"flash_image_dir": "${FUCHSIA_OUT_DIR}/arm64"
+	}
+}
+EOF
+;;
+cepheus-dbg-tw)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18900",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "cepheus",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0003-storage-unittest-tdea-dbg.cfg",
+		"NBL-0003-storage-unittest-tp-dbg.cfg",
+		"NBL-0008-crypto-bn-dbg.cfg",
+		"NBL-0008-crypto-ecdsa-dbg.cfg",
+		"NBL-0008-crypto-others-dbg.cfg",
+		"NBL-0008-crypto-peraead-dbg.cfg",
+		"NBL-0008-crypto-rsa-dbg.cfg",
+		"NBL-0009-jemalloc-dbg.cfg",
+		"NBL-0009-libc-tests-dbg.cfg",
+		"NBL-0010-secmgr-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0100-grt-secmgr-unit-test.cfg"
+	],
+	"vm": {
+		"console": "adb",
+		"devices": ["45fdafd8"],
+		"partitions": ["ifaa"],
+		"images": ["bootdata-combo-qcomv8-cepheus-signed.bin"],
+		"flash_image_dir": "${FUCHSIA_OUT_DIR}/arm64"
+	}
+}
+EOF
+;;
+cepheus-dbg-sy)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18900",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "cepheus",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0003-storage-unittest-tdea-dbg.cfg",
+		"NBL-0003-storage-unittest-tp-dbg.cfg",
+		"NBL-0008-crypto-bn-dbg.cfg",
+		"NBL-0008-crypto-ecdsa-dbg.cfg",
+		"NBL-0008-crypto-others-dbg.cfg",
+		"NBL-0008-crypto-peraead-dbg.cfg",
+		"NBL-0008-crypto-rsa-dbg.cfg",
+		"NBL-0009-jemalloc-dbg.cfg",
+		"NBL-0009-libc-tests-dbg.cfg",
+		"NBL-0010-secmgr-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0100-grt-secmgr-unit-test.cfg"
+	],
+	"vm": {
+		"console": "adb",
+		"devices": ["cee83671"],
+		"partitions": ["ifaa"],
+		"images": ["bootdata-combo-qcomv8-cepheus-signed.bin"],
+		"flash_image_dir": "${FUCHSIA_OUT_DIR}/arm64"
+	}
+}
+EOF
+;;
+p80-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg"
+	],
+	"vm": {
+		"chip_name": "MT6779",
+		"devices": ["0123456789ABCDEF"],
+		"partitions": ["gz2"],
+		"images": ["bootdata-combo-mtkv8-p80-signed.bin"],
+		"flash_image_dir": "${FUCHSIA_OUT_DIR}/arm64",
+		"mcdi_ctrl": "/proc/mcdi/state",
+		"dbg_ctrl": "",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+p60-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0001-mtk-push-nbl-daemon.cfg",
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0100-grt-secmgr-unit-test.cfg"
+	],
+	"vm": {
+		"chip_name": "MT6771",
+		"devices": ["0123456789ABCDEF"],
+		"partitions": ["gz2"],
+		"images": ["bootdata-combo-mtkv8-p60-signed.bin"],
+		"flash_image_dir": "${FUCHSIA_OUT_DIR}/arm64",
+		"mcdi_ctrl": "/sys/kernel/debug/mcdi/mcdi_state",
+		"dbg_ctrl": "",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+p60-tee-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0015-keymaster_tipc-dbg.cfg",
+		"REE-0015-keymaster_ut-dbg.cfg",
+		"REE-0016-gatekeeper-unit-tests-dbg.cfg"
+	],
+	"vm": {
+		"chip_name": "MT6771",
+		"devices": ["FEDCBA9876543210"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_k71v1_64_bsp_gen_p_SBOOT_DIS.bin", "lk-verified.img", "boot-verified.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_p60/alps/out/target/product/k71v1_64_bsp_gen_p",
+		"mcdi_ctrl": "",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+p60-tee-benchmark-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"NBL-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_port-dbg.cfg"
+	],
+	"vm": {
+		"chip_name": "MT6771",
+		"devices": ["FEDCBA9876543210"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_k71v1_64_bsp_gen_p_SBOOT_DIS.bin", "lk-verified.img", "boot-verified.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_p60/alps/out/target/product/k71v1_64_bsp_gen_p",
+		"mcdi_ctrl": "/sys/kernel/debug/mcdi/mcdi_state",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+urovo-tee-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0015-keymaster_tipc-dbg.cfg",
+		"REE-0015-keymaster_ut-dbg.cfg",
+		"REE-0016-gatekeeper-unit-tests-dbg.cfg"
+	],
+	"vm": {
+		"chip_name": "MT8788",
+		"devices": ["ABCDEF0123456789"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_tb8788p1_64_bsp_SBOOT_DIS.bin", "lk-verified.img", "boot-verified.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_urovo/alps/out/target/product/tb8788p1_64_bsp",
+		"mcdi_ctrl": "",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+urovo-tee-benchmark-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"NBL-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_port-dbg.cfg"
+	],
+	"vm": {
+		"chip_name": "MT8788",
+		"devices": ["ABCDEF0123456789"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_tb8788p1_64_bsp_SBOOT_DIS.bin", "lk-verified.img", "boot-verified.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_urovo/alps/out/target/product/tb8788p1_64_bsp",
+		"mcdi_ctrl": "/sys/kernel/debug/mcdi/mcdi_state",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+urovo-tee-xet571-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0100-grt-secmgr-unit-test.cfg"
+	],
+	"vm": {
+		"chip_name": "MT8788",
+		"devices": ["0123456789FEDCBA"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_xet571_SBOOT_DIS.bin", "lk-verified.img", "boot-verified.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_mbwr/alps/out/target/product/xet571",
+		"mcdi_ctrl": "",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+urovo-tee-xet571-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0100-grt-secmgr-unit-test.cfg"
+	],
+	"vm": {
+		"chip_name": "MT8788",
+		"devices": ["0123456789FEDCBA"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_xet571_SBOOT_DIS.bin", "lk-verified.img", "boot-verified.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_mbwr/alps/out/target/product/xet571",
+		"mcdi_ctrl": "",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+p85-tee-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:", "BUG:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0015-keymaster_tipc-dbg.cfg",
+		"REE-0015-keymaster_ut-dbg.cfg",
+		"REE-0016-gatekeeper-unit-tests-dbg.cfg"
+	],
+	"vm": {
+		"chip_name": "MT6785",
+		"devices": ["9876543210FEDCBA"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_k85v1_64_pre_SBOOT_DIS.bin", "lk-verified.img", "boot.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_p85/alps/out/target/product/k85v1_64_pre",
+		"mcdi_ctrl": "",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+p85-tee-benchmark-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:", "BUG:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"NBL-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_port-dbg.cfg"
+	],
+	"vm": {
+		"chip_name": "MT6785",
+		"devices": ["9876543210FEDCBA"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_k85v1_64_pre_SBOOT_DIS.bin", "lk-verified.img", "boot.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_p85/alps/out/target/product/k85v1_64_pre",
+		"mcdi_ctrl": "/proc/mcdi/state",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+imx8qxp-linux-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux-na/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "nxp-linux",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0003-storage-unittest-tdea-dbg.cfg",
+		"NBL-0003-storage-unittest-tp-dbg.cfg",
+		"NBL-0008-crypto-bn-dbg.cfg",
+		"NBL-0008-crypto-ecdsa-dbg.cfg",
+		"NBL-0008-crypto-others-dbg.cfg",
+		"NBL-0008-crypto-peraead-dbg.cfg",
+		"NBL-0008-crypto-rsa-dbg.cfg",
+		"NBL-0009-jemalloc-dbg.cfg",
+		"NBL-0009-libc-tests-dbg.cfg",
+		"NBL-0010-secmgr-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0099-grt-loader-unit-test-4.cfg"
+	],
+	"vm": {
+		"chip_name": "imx8qx",
+		"partitions": ["bootloader", "dtbo_a", "boot_a", "boot_b", "bootloader1"],
+		"images": ["u-boot-imx8qx-no-tee.imx", "boot_script.img", "kernel.img", "ramdisk.img", "u-boot-imx8qx.imx"],
+		"flash_image_dir": "${FUCHSIA_DIR}/imx-source/linux_build/out/images/",
+		"devices": ["0609600e82963fd8"]
+	}
+}
+EOF
+;;
+imx8mm-linux-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux-na/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "nxp-linux",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0003-storage-unittest-tdea-dbg.cfg",
+		"NBL-0003-storage-unittest-tp-dbg.cfg",
+		"NBL-0008-crypto-bn-dbg.cfg",
+		"NBL-0008-crypto-ecdsa-dbg.cfg",
+		"NBL-0008-crypto-others-dbg.cfg",
+		"NBL-0008-crypto-peraead-dbg.cfg",
+		"NBL-0008-crypto-rsa-dbg.cfg",
+		"NBL-0009-jemalloc-dbg.cfg",
+		"NBL-0009-libc-tests-dbg.cfg",
+		"NBL-0010-secmgr-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0099-grt-loader-unit-test-4.cfg"
+	],
+	"vm": {
+		"chip_name": "imx8mm",
+		"partitions": ["bootloader", "dtbo_a", "boot_a", "boot_b", "bootloader1"],
+		"images": ["u-boot-imx8mm-no-tee.imx", "boot_script.img", "kernel.img", "ramdisk.img", "u-boot-imx8mm.imx"],
+		"flash_image_dir": "${FUCHSIA_DIR}/imx-source/linux_build/out/images/",
+		"devices": ["8266fa0a5c85d6ee"]
+	}
+}
+EOF
+;;
+imx8mm-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "nxp",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0003-storage-unittest-tdea-dbg.cfg",
+		"NBL-0003-storage-unittest-tp-dbg.cfg",
+		"NBL-0008-crypto-bn-dbg.cfg",
+		"NBL-0008-crypto-ecdsa-dbg.cfg",
+		"NBL-0008-crypto-others-dbg.cfg",
+		"NBL-0008-crypto-peraead-dbg.cfg",
+		"NBL-0008-crypto-rsa-dbg.cfg",
+		"NBL-0009-jemalloc-dbg.cfg",
+		"NBL-0009-libc-tests-dbg.cfg",
+		"NBL-0010-secmgr-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0099-grt-loader-unit-test-4.cfg"
+	],
+	"vm": {
+		"partitions": ["bootloader0", "gpt", "boot_a", "system_a", "vbmeta_a", "vendor_a", "dtbo_a", "bootloader1"],
+		"images": ["u-boot-imx8mm-no-tee.imx", "partition-table.img", "boot.img", "system.img", "vbmeta-imx8mm.img", "vendor.img", "dtbo-imx8mm.img", "u-boot-imx8mm.imx"],
+		"flash_image_dir": "${FUCHSIA_DIR}/imx-source/android_build/out/target/product/evk_8mm/",
+		"devices": ["8266fa0a5c85d6ee"]
+	}
+}
+EOF
+;;
+imx8qxp-tee-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "nxp",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg"
+	],
+	"vm": {
+		"console": "adb",
+		"chip_name": "i.MX8QXP",
+		"devices": ["0609600e82963fd8"],
+		"partitions": ["bootloader0", "bootloader1", "boot_a", "system_a", "vbmeta_a", "vendor_a", "dtbo_a"],
+		"images": ["u-boot-imx8qxp-no-tee.imx", "u-boot-imx8qxp.imx", "boot.img", "system.img", "vbmeta-imx8qxp.img", "vendor.img", "dtbo-imx8qxp.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/imx-source/android_build/out/target/product/mek_8q"
+	}
+}
+EOF
+;;
+imx8qxp-tee-benchmark-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "nxp",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"NBL-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_port-dbg.cfg"
+	],
+	"vm": {
+		"console": "adb",
+		"chip_name": "i.MX8QXP",
+		"devices": ["0609600e82963fd8"],
+		"partitions": ["bootloader0", "bootloader1", "boot_a", "system_a", "vbmeta_a", "vendor_a", "dtbo_a"],
+		"images": ["u-boot-imx8qxp-no-tee.imx", "u-boot-imx8qxp.imx", "boot.img", "system.img", "vbmeta-imx8qxp.img", "vendor.img", "dtbo-imx8qxp.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/imx-source/android_build/out/target/product/mek_8q"
+	}
+}
+EOF
+;;
+imx8qm-tee-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18902",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "nxp",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg"
+	],
+	"vm": {
+		"console": "adb",
+		"chip_name": "i.MX8QM",
+		"devices": ["0b07080e8289ff95"],
+		"partitions": ["bootloader0", "bootloader1", "boot_a", "system_a", "vbmeta_a", "vendor_a", "dtbo_a"],
+		"images": ["u-boot-imx8qm-no-tee.imx", "u-boot-imx8qm.imx", "boot.img", "system.img", "vbmeta-imx8qm.img", "vendor.img", "dtbo-imx8qm.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/imx-source/android_build/out/target/product/mek_8q"
+	}
+}
+EOF
+;;
+imx8qm-tee-benchmark-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18902",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "nxp",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"NBL-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_port-dbg.cfg"
+	],
+	"vm": {
+		"console": "adb",
+		"chip_name": "i.MX8QM",
+		"devices": ["0b07080e8289ff95"],
+		"partitions": ["bootloader0", "bootloader1", "boot_a", "system_a", "vbmeta_a", "vendor_a", "dtbo_a"],
+		"images": ["u-boot-imx8qm-no-tee.imx", "u-boot-imx8qm.imx", "boot.img", "system.img", "vbmeta-imx8qm.img", "vendor.img", "dtbo-imx8qm.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/imx-source/android_build/out/target/product/mek_8q"
+	}
+}
+EOF
+;;
+ecarx-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"FST-0005-grt-loader-unit-test-2-dbg.cfg",
+		"FST-0007-grt-secmgr.cfg",
+		"NBL-0001-k-ut-all-dbg.cfg",
+		"NBL-0002-runtests-dbg.cfg",
+		"NBL-0003-storage-unittest-td-dbg.cfg",
+		"NBL-0011-plid-test-dbg.cfg",
+		"NBL-0013-hwcrypto-unittest-dbg.cfg",
+		"NBL-0102-nsc-nss.cfg",
+		"REE-0002-tipc-ta2ta-ipc-dbg.cfg",
+		"REE-0004-mref_ut_lead-dbg.cfg",
+		"REE-0006-mref_main-dbg.cfg",
+		"REE-0100-grt-secmgr-unit-test.cfg"
+	],
+	"vm": {
+		"chip_name": "MT6771",
+		"devices": ["0123456789FEDCBA"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_ecarxICp1_64_SBOOT_DIS.bin", "lk-verified.img", "boot-verified.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_e02/alps/out/target/product/ecarxICp1_64",
+		"mcdi_ctrl": "",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+ecarx-tee-benchmark-dbg)
+cat > "${CFG}" << EOF
+{
+	"name": "${TARGET}",
+	"target": "linux/arm64",
+	"http": "localhost:18901",
+	"workdir": "${GOPATH}/working_dir.${TARGET}",
+	"syzkaller": "${SYZKALLER_GOROOT}",
+	"sandbox": "none",
+	"reproduce": false,
+	"cover": false,
+	"procs": 8,
+	"ignores": [ "INFO:", "WARNING:" ],
+	"type": "mtk",
+	"fuchsia_out_dir": "${FUCHSIA_OUT_DIR}",
+	"oneshot_tests": [
+		"NBL-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"NBL-0014-nbl_benchmarks-trusty_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-nebula_port-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_channel-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_mmu-dbg.cfg",
+		"REE-0014-nbl_benchmarks-trusty_port-dbg.cfg"
+	],
+	"vm": {
+		"chip_name": "MT6771",
+		"devices": ["0123456789FEDCBA"],
+		"partitions": ["preloader", "lk", "boot", "tee1", "vendor", "system", "userdata"],
+		"images": ["preloader_ecarxICp1_64_SBOOT_DIS.bin", "lk-verified.img", "boot-verified.img", "tee-verified.img", "vendor.img", "system.img", "userdata.img"],
+		"flash_image_dir": "${FUCHSIA_DIR}/mtk-source/android_e02/alps/out/target/product/ecarxICp1_64",
+		"mcdi_ctrl": "/sys/kernel/debug/mcdi/mcdi_state",
+		"dbg_ctrl": "trusty*.c",
+		"flashtool_dir": "prebuilts/SP_Flash_Tool_v5.1922.00.100/"
+	}
+}
+EOF
+;;
+*)
+usage
+exit 1
+;;
+esac
+
+SYZ_MANAGER=${GOPATH}/src/github.com/google/syzkaller/bin/syz-manager
+SYZ_MANAGER_ARGS="-config ${CFG} -oneshot -testpool third_party/syzkaller/syz-manager/testpool "
+if [[ "${VERBOSE}" != "0" ]]; then
+  SYZ_MANAGER_ARGS+="-debug -v ${VERBOSE}"
+fi
+${SYZ_MANAGER} ${SYZ_MANAGER_ARGS}

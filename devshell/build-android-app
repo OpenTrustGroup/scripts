@@ -1,0 +1,104 @@
+#!/bin/bash
+#Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+
+### Compile an android studio project (gradle).
+## usage: fx build-android-app [-p <project path>] [-c] [-d]
+##
+##   -p            Android studio project path.
+##   -c            Clean project(optional).Use at least one of the parameters [-c] and [-d].
+##   -d            Assemble debug(optional).Use at least one of the parameters [-c] and [-d].
+##   -h            Show help.
+##
+
+set -e
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+ANDROID_SDK_DEFAULT_PATH=${ANDROID_SDK_HOME}
+ANDROID_NDK_DEFAULT_PATH=${ANDROID_NDK_HOME}
+
+ARGS=`getopt -o hcdp: -n 'build-android-app' -- "$@"`
+if [ $? != 0 ]; then
+    echo "Terminating..."
+    exit 1
+fi
+
+eval set -- "${ARGS}"
+
+while true
+do
+    case "$1" in
+        -h) fx-command-help ; exit 0 ;;
+        -c)
+            PROJECT_CLEAN=1
+            shift;;
+        -d)
+            PROJECT_DEBUG=1
+            shift;;
+        -p)
+            PROJECT_PATH=$2
+            shift 2
+            ;;
+        --)
+            shift;
+            break
+            ;;
+        *) fx-command-help ; exit 1;;
+    esac
+done
+
+if [ ! -n "$PROJECT_PATH" ]; then
+    echo "build-android-app project_path is null."
+    fx-command-help
+    exit 1
+fi
+
+if [ -z "$PROJECT_DEBUG" ] && [ -z "$PROJECT_CLEAN" ]; then
+    echo -e "\nBuild android app failed: ${PROJECT_PATH}. Use at least one of the parameters [-c] and [-d].\n"
+    exit 1
+fi
+
+echo -e "\nBuild android app start: ${PROJECT_PATH}.\n"
+
+echo -e "\nSet environmental variable.\n"
+#check environmental variable
+if [ -z "$JAVA_HOME" ]; then
+    JAVA_DEFAULT_PATH='dirname $(dirname $(readlink -f $(which javac)))'
+if [ -d "$JAVA_DEFAULT_PATH" ]; then
+    export JAVA_HOME=$JAVA_DEFAULT_PATH
+    export JRE_HOME=${JAVA_HOME}/jre
+    export CLASSPATH=.:${JAVA_HOME}/lib:${JRE_HOME}/lib
+    export PATH=${JAVA_HOME}/bin:$PATH
+else
+    echo -e "\nBuild android app failed. JAVA_HOME is not set\n"
+fi
+fi
+
+if [ -z "$ANDROID_HOME" ]; then
+    export ANDROID_HOME=$ANDROID_SDK_DEFAULT_PATH
+    export PATH=${ANDROID_HOME}/tools:${ANDROID_HOME}/platform-tools:$PATH
+fi
+
+if [ -z "$NDK" ]; then
+    export NDK=$ANDROID_NDK_DEFAULT_PATH
+    export PATH=$PATH:$NDK
+fi
+
+echo -e "\nSet environmental variable finish.\n"
+
+cd ${PROJECT_PATH}
+
+if [ -n "$PROJECT_CLEAN" ]; then
+    echo -e "\nBuild android app clean: ${PROJECT_PATH}.\n"
+    ./gradlew clean
+fi
+
+if [ -n "$PROJECT_DEBUG" ]; then
+    echo -e "\nBuild android app assemble debug: ${PROJECT_PATH}.\n"
+    ./gradlew assembleDebug
+fi
+
+cd ${FUCHSIA_DIR}
+
+echo -e "\nBuild android app finish.\n"

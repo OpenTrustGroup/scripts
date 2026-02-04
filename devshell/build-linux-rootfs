@@ -1,0 +1,159 @@
+#!/bin/bash
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build Linux rootfs
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+readonly TOOLCHAIN_PREFIX="${LINARO_AARCH64_CROSS_COMPILE}"
+readonly LINUX_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux"
+readonly REE_TRUSTY_BUILDROOT="${FUCHSIA_OUT_DIR}/build-ree-trusty"
+readonly REE_DROPBEAR_BUILDROOT="${FUCHSIA_OUT_DIR}/build-dropbear-aarch64-linux-gnu"
+readonly TRUSTY_USER_TASKS_BUILDROOT="${FUCHSIA_OUT_DIR}/build-trusty/user_tasks"
+readonly GEN_ROOTFS_PATH="${FUCHSIA_DIR}/gen_rootfs"
+readonly BUSYBOX_COMMON_TARGET="fvp"
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+export PATH=${PATH}:${LINUX_BUILDROOT}/usr
+export BUSYBOX_PATH="${FUCHSIA_DIR}/third_party/busybox"
+export ROOTFS_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux-rootfs"
+export VERBOSE="${VERBOSE}"
+
+declare EXTRA_ROOTFS_FILELIST="${ROOTFS_BUILDROOT}/filelist-tee.txt"
+declare VERBOSE="${VERBOSE:-0}"
+declare CLEAN="${CLEAN:-false}"
+
+usage() {
+  printf '%s: [-c] [-v]\n' "$0"
+  printf '  -c            clean & build\n'
+  printf '  -v            show verbose compiling messages\n'
+}
+
+while getopts "chv" opt; do
+  case "${opt}" in
+    c) CLEAN="true" ;;
+    h) usage ; exit 0 ;;
+    v) VERBOSE="1" ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ -n "${CCACHE_DIR}" ]] && [[ -d "${CCACHE_DIR}" ]]; then
+  export CROSS_COMPILE="$(which ccache) ${TOOLCHAIN_PREFIX}"
+else
+  export CROSS_COMPILE="${TOOLCHAIN_PREFIX}"
+fi
+
+cd ${GEN_ROOTFS_PATH}
+
+# Build busybox and prepare common filelist: filelist-final.txt
+if [[ "${CLEAN}" = "true" ]]; then
+  echo "Cleaning gen_rootfs build dir..."
+  rm -rf -- "${ROOTFS_BUILDROOT}"
+fi
+
+mkdir -p ${ROOTFS_BUILDROOT}
+
+TRACE=${TRACE} ./generate-cpio-rootfs.sh ${BUSYBOX_COMMON_TARGET}
+
+# prepare extra filelist
+append_to_extra_filelist() {
+  for ENTRY in "$@"; do
+    echo "${ENTRY}" >> ${EXTRA_ROOTFS_FILELIST}
+  done
+}
+
+echo "# filelist-tee-common /start" > ${EXTRA_ROOTFS_FILELIST}
+
+# /root/data is used to save security storage data.
+# /root/dev_rpmb is a fake device if emulate RPMB in memory.
+# start_proxyd is shell starting storageproxyd.
+TOOL_CHAIN=`dirname ${TOOLCHAIN_PREFIX} | xargs dirname`
+ree_trusty_filelist_entry=(
+  "file /bin/hello.ha ${FUCHSIA_DIR}/third_party/hee-trusty/samples/uuid_svr/hello.ha 755 0 0"
+  "file /bin/uuid_svr.far ${FUCHSIA_DIR}/out/arm64/package/uuid_svr/uuid_svr.far 755 0 0"
+  "file /bin/uuid_cli_far.far ${FUCHSIA_DIR}/out/arm64/package/uuid_cli_far/uuid_cli_far.far 755 0 0"
+  "file /bin/uuid_cli.un ${FUCHSIA_DIR}/out/arm64/uuid_cli 755 0 0"
+  "file /bin/uuid_cli ${FUCHSIA_DIR}/out/arm64/uuid_cli.nu 755 0 0"
+  "file /bin/restart_test ${FUCHSIA_DIR}/out/arm64/restart_test 755 0 0"
+  "file /bin/restart_test.far ${FUCHSIA_DIR}/out/arm64/package/restart_test_far/restart_test_far.far 755 0 0"
+  "file /bin/ta_big.un ${FUCHSIA_DIR}/out/arm64/exe.unstripped/ta_big 755 0 0"
+  "file /bin/ta_big ${FUCHSIA_DIR}/out/arm64/ta_big 755 0 0"
+  "file /bin/taloaderproxyd ${REE_TRUSTY_BUILDROOT}/taloaderproxyd 755 0 0"
+  "file /bin/nbl_secmgr_agent ${REE_TRUSTY_BUILDROOT}/nbl_secmgr_agent 755 0 0"
+  "file /bin/nbl_daemon ${REE_TRUSTY_BUILDROOT}/nbl_daemon 755 0 0"
+  "file /bin/nblmsg ${REE_TRUSTY_BUILDROOT}/nblmsg 755 0 0"
+  "file /bin/start_loaderproxyd ${REE_TRUSTY_BUILDROOT}/start_loaderproxyd 755 0 0"
+  "file /bin/ta-loader_test ${REE_TRUSTY_BUILDROOT}/ta-loader_test 755 0 0"
+  "file /bin/ta-license_test ${REE_TRUSTY_BUILDROOT}/ta-license_test 755 0 0"
+  "file /bin/libnbl_fwk_ree_test ${REE_TRUSTY_BUILDROOT}/libnbl_fwk_ree_test 755 0 0"
+  "file /bin/libnbl_secmgr_ree_test ${REE_TRUSTY_BUILDROOT}/libnbl_secmgr_ree_test 755 0 0"
+  "file /bin/nbl_fwk_test ${FUCHSIA_DIR}/out/arm64/nbl_fwk_test 755 0 0"
+  "file /bin/nbl_fwk_other_test ${FUCHSIA_DIR}/out/arm64/nbl_fwk_other_test 755 0 0"
+  "file /lib/libseccam-ipc.so ${REE_TRUSTY_BUILDROOT}/libseccam-ipc.so 755 0 0"
+  "file /bin/nbl_storageproxyd ${REE_TRUSTY_BUILDROOT}/nbl_storageproxyd 755 0 0"
+  "file /bin/tipc-test ${REE_TRUSTY_BUILDROOT}/tipc-test 755 0 0"
+  "file /bin/secure-storage-unit-test ${REE_TRUSTY_BUILDROOT}/secure-storage-unit-test 755 0 0"
+  "file /bin/start_proxyd ${REE_TRUSTY_BUILDROOT}/start_proxyd 755 0 0"
+  "file /bin/start_nbl_daemon ${REE_TRUSTY_BUILDROOT}/start_nbl_daemon 755 0 0"
+  "file /bin/inject_secmgr_keystore ${FUCHSIA_DIR}/third_party/ree-trusty/nbl_daemon/inject_secmgr_keystore 755 0 0"
+  "file /bin/nblruncmd ${REE_TRUSTY_BUILDROOT}/nblruncmd 755 0 0"
+  "file /bin/start_tui_service ${REE_TRUSTY_BUILDROOT}/start_tui_service 755 0 0"
+  "file /bin/nbl_tui_service ${REE_TRUSTY_BUILDROOT}/nbl_tui_service 755 0 0"
+  "file /bin/ion_test ${REE_TRUSTY_BUILDROOT}/ion_test 755 0 0"
+  "file /lib/libstdc++.so.6.0.22 ${TOOL_CHAIN}/aarch64-linux-gnu/libc/lib/libstdc++.so.6.0.22 755 0 0"
+  "file /bin/dropbear ${REE_DROPBEAR_BUILDROOT}/dropbear 755 0 0"
+  "file /bin/scp ${REE_DROPBEAR_BUILDROOT}/scp 755 0 0"
+  "file /bin/evtest ${REE_TRUSTY_BUILDROOT}/evtest 755 0 0"
+  "file /bin/nbl_attestd ${REE_TRUSTY_BUILDROOT}/nbl_attestd 755 0 0"
+  "dir /root/ree 755 0 0"
+  "dir /root/ree/secmgr_unit_test 755 0 0"
+  "dir /root/ree/secmgr_unit_test/manual 755 0 0"
+  "dir /root/ree/secmgr_unit_test/demo 755 0 0"
+  "file /root/ree/bootdata-license-qemu-virt.bin ${FUCHSIA_OUT_DIR}/arm64/bootdata-license-qemu-virt.bin 755 0 0"
+  "dir /root/ree/provision 755 0 0"
+  "dir /root/ree/provision/secmgr_test_ree_ha2 755 0 0"
+  "file /root/ree/provision/secmgr_test_ree_ha2/provision_create_sd.json ${FUCHSIA_OUT_DIR}/arm64/provision/secmgr_test_ree_ha2/provision_create_sd.json 666 0 0"
+  "file /root/ree/provision/secmgr_test_ree_ha2/provision_get_device_state.json ${FUCHSIA_OUT_DIR}/arm64/provision/secmgr_test_ree_ha2/provision_get_device_state.json 666 0 0"
+  "file /root/ree/provision/secmgr_test_ree_ha2/provision_ha.json ${FUCHSIA_OUT_DIR}/arm64/provision/secmgr_test_ree_ha2/provision_ha.json 666 0 0"
+  "dir /root/ree/provision/secmgr_test_ree_ha1 755 0 0"
+  "file /root/ree/provision/secmgr_test_ree_ha1/provision_create_sd.json ${FUCHSIA_OUT_DIR}/arm64/provision/secmgr_test_ree_ha1/provision_create_sd.json 666 0 0"
+  "file /root/ree/provision/secmgr_test_ree_ha1/provision_get_device_state.json ${FUCHSIA_OUT_DIR}/arm64/provision/secmgr_test_ree_ha1/provision_get_device_state.json 666 0 0"
+  "file /root/ree/provision/secmgr_test_ree_ha1/provision_ha.json ${FUCHSIA_OUT_DIR}/arm64/provision/secmgr_test_ree_ha1/provision_ha.json 666 0 0"
+  "dir /root/ree/provision/keystore 755 0 0"
+  "file /root/ree/provision/keystore/hee_ca_cert ${FUCHSIA_DIR}/third_party/hee-trusty/nbl_secmgr_srv/keystore/hee_ca_cert 666 0 0"
+  "file /root/ree/provision/keystore/hee_cert ${FUCHSIA_DIR}/third_party/hee-trusty/nbl_secmgr_srv/keystore/hee_cert 666 0 0"
+  "file /root/ree/provision/keystore/hee_private_key ${FUCHSIA_DIR}/third_party/hee-trusty/nbl_secmgr_srv/keystore/hee_private_key 666 0 0"
+  "file /root/ree/provision/keystore/spaik_provision ${FUCHSIA_DIR}/third_party/hee-trusty/nbl_secmgr_srv/keystore/spaik_provision 666 0 0"
+  "file /root/ree/provision/keystore/tfw_cert ${FUCHSIA_DIR}/third_party/hee-trusty/nbl_secmgr_srv/keystore/tfw_cert 666 0 0"
+  "file /root/ree/provision/keystore/tfw_private_key ${FUCHSIA_DIR}/third_party/hee-trusty/nbl_secmgr_srv/keystore/tfw_private_key 666 0 0"
+  "file /root/ree/provision/keystore/tsm_root_cert ${FUCHSIA_DIR}/third_party/hee-trusty/nbl_secmgr_srv/keystore/tsm_root_cert 666 0 0"
+  "file /root/ree/provision/keystore/tsm_root_cert_other1 ${FUCHSIA_DIR}/third_party/hee-trusty/nbl_secmgr_srv/keystore/tsm_root_cert_other1 666 0 0"
+  "file /bin/drmdevice ${FUCHSIA_DIR}/scripts/libdrm-2.4.98/bin/drmdevice 755 0 0"
+  "file /bin/modetest ${FUCHSIA_DIR}/scripts/libdrm-2.4.98/bin/modetest 755 0 0"
+  "file /lib/libdrm.so.2.4.0 ${FUCHSIA_DIR}/scripts/libdrm-2.4.98/lib/libdrm.so.2.4.0 755 0 0"
+  "slink /lib/libdrm.so.2 /lib/libdrm.so.2.4.0 755 0 0"
+  "file /lib/libkms.so.1.0.0 ${FUCHSIA_DIR}/scripts/libdrm-2.4.98/lib/libkms.so.1.0.0 755 0 0"
+  "slink /lib/libkms.so.1 /lib/libkms.so.1.0.0 755 0 0"
+  "file /lib/libcrypto.so.1.1 ${REE_TRUSTY_BUILDROOT}/openssl/linux/lib/libcrypto.so.1.1 755 0 0"
+  "slink /lib/libcrypto.so /lib/libcrypto.so.1.1 755 0 0"
+)
+append_to_extra_filelist "${ree_trusty_filelist_entry[@]}"
+
+echo "# filelist-tee-common /end" >> ${EXTRA_ROOTFS_FILELIST}
+
+
+# Merge common and extra filelists and generate rootfs image
+cd ${ROOTFS_BUILDROOT}
+
+cat filelist-final.txt > filelist.tmp
+cat ${EXTRA_ROOTFS_FILELIST} >> filelist.tmp
+
+${LINUX_BUILDROOT}/usr/gen_init_cpio filelist.tmp | gzip > filesystem.cpio.gz
+
+mkdir -p ${FUCHSIA_BUILD_DIR}/host_x64/linux
+ln -sf ${ROOTFS_BUILDROOT}/filesystem.cpio.gz ${FUCHSIA_BUILD_DIR}/host_x64/linux/initrd.img

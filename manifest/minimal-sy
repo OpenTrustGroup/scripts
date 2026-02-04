@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <projects>
+    <project name="scripts"
+             path="scripts"
+             remote="ssh://gerrit-sy:29418/scripts"
+             remotebranch="nebula"
+             gerrithost="http://gerrit"/>
+  </projects>
+  <hooks>
+    <hook name="install-fx"
+          project="scripts"
+          action="devshell/lib/add_symlink_to_bin.sh"/>
+    <hook name="download-prebuilts"
+          project="scripts"
+          action="devshell/download-prebuilts"/>
+  </hooks>
+</manifest>

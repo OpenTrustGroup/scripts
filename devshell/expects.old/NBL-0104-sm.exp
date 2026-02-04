@@ -1,0 +1,37 @@
+# Run test for SM2/3/4
+
+if { "$env(USE_RELEASE)" == "true" } {
+    # install exe into HEE
+    set ha_id 1ee6d09d-2e6d-4bc8-8683-8d68295f74db
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e test-sm -a $env(FUCHSIA_IP) -i $ha_id"
+    # set the run command in HEE.
+    set cmd "nbl_daemon -l $ha_id"
+} else {
+    set cmd "nblruncmd /system/test/sys/test-sm"
+}
+send -i $ree "$cmd\r"
+# LOG Example:
+# sm2: 1236: test_sm2_kep_b: PASSED
+# sm2: 1236: test_sm2_kep_b: FAILED
+# COMPLETE: SUCCESS
+# COMPLETE: FAILED
+
+# run time = 1? seconds.
+set timeout 30
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    "*: FAILED" {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+    -i $ree "COMPLETE: SUCCESS"
+}

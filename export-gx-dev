@@ -1,0 +1,80 @@
+#!/bin/bash
+# Copyright 2021 GoldenRiver Technology Co., Ltd. All rights reserved.
+
+# Export GX-Dev
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly nebula_root="$(cd "$(dirname "${script_dir}")" && pwd)"
+
+usage() {
+  printf '%s -o <GX_DEV_DIR> [-r] [-a] [-h]\n' `basename "$0"`
+  printf '  -o <GX_DEV_DIR>    GX-Dev directory. Stop script if GX-Dev already existed.\n'
+  printf '  -r                 make a release version for customer\n'
+  printf '  -a                 export Android Sdk to GX-Dev\n'
+  printf '  -h                 show help.\n'
+  printf '\n'
+}
+
+declare GX_DEV_DIR=""
+declare MAKE_RELEASE="0"
+declare EXPORT_ANDROID_SDK="0"
+
+while getopts "o:rah" opt; do
+  case "${opt}" in
+    o) GX_DEV_DIR="${OPTARG}" ;;
+    r) MAKE_RELEASE="1" ;;
+    a) EXPORT_ANDROID_SDK="1" ;;
+    h) usage; exit 0 ;;
+    *) usage; exit 1 ;;
+  esac
+done
+
+if [[ -z "${GX_DEV_DIR}" ]]; then
+  usage
+  exit 1
+fi
+
+if [[ -e "${GX_DEV_DIR}" ]]; then
+  printf "${GX_DEV_DIR} already existed.\n"
+  exit 1
+fi
+
+printf "\nCreating GX-Dev...\n"
+curl -s "http://gerrit/plugins/gitiles/grt_sdk_scripts/+/refs/heads/nebula/sdk_app_init?format=TEXT" | base64 --decode | bash -s "${GX_DEV_DIR}"
+
+if [[ "${MAKE_RELEASE}" == "1" ]]; then
+  printf "\nMaking a release version for customer...\n"
+
+  pushd ${GX_DEV_DIR} > /dev/null
+  rm -rf .jiri_*
+  rm -rf apps
+  find . -name ".git" |xargs rm -rf
+  find . -name ".gitignore" |xargs rm -rf
+  find . -name ".vscode" |xargs rm -rf
+
+  mkdir -p .jiri_root/bin
+  pushd .jiri_root/bin > /dev/null
+  ln -s ../../scripts/gx
+  popd > /dev/null
+  popd > /dev/null
+fi
+
+printf "\nExporting Nebula SDK to GX-Dev...\n"
+${script_dir}/fx make-sdk -o "${GX_DEV_DIR}/nebula_sdk"
+
+android_sdk_path_regex='ANDROID_SDK_HOME=(\S+)'
+android_sdk_path=""
+if [[ "${EXPORT_ANDROID_SDK}" == "1" ]]; then
+  if [[ "$(cat ${nebula_root}/.prebuilts_config|grep ANDROID_SDK)" =~ ${android_sdk_path_regex} ]]; then
+    android_sdk_path=${BASH_REMATCH[1]}
+  else
+    printf "Error: Android SDK path not found in ${nebula_root}/.prebuilts_config\n"
+  fi
+
+  printf "\nExporting Android SDK to GX-Dev...\n"
+  cp -a ${android_sdk_path} ${GX_DEV_DIR}/android_sdk
+fi
+
+printf "\nDone.\n"

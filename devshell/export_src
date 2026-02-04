@@ -1,0 +1,299 @@
+#!/usr/bin/env python
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+
+'''
+1. In Ubuntu these packages:
+
+sudo apt install python-pip
+pip install openpyxl
+
+must be installed.
+
+2. How to set command options.
+
+fx export_src \
+-i /home/zhoubo/develop/leo/fuchsia_workspace/nebula/docs/nebula/design/index.xlsx \
+-r /home/zhoubo/develop/sdk/NBL_SDK_V1.0.17.4-PREVIEW-nfc_readonly-nebula-1.0.17-BUILD-0_20200527_181408 \
+-t TEEI \       # This is sheet used for create document or source.
+-s sdk \        # one column name of above sheet (-t) for configure whether or not export source or document.(value is Y)
+-o /home/zhoubo/develop/sdk/TEEI_SDK
+'''
+
+import os
+import shutil
+import sys
+import getopt
+import fnmatch
+
+try:
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, Color
+except:
+    print('Find "openpyxl" is NOT installed. You can use blow command to install it:')
+    print(' sudo apt install python-pip')
+    print(' pip install openpyxl')
+    sys.exit(1)
+
+
+
+# Please change the following values when index.xlsx structure changed.
+
+# Row 1 is column titles. So scan from row 2.
+ROW_SCAN_BEGIN = 2
+
+#Source code name.
+COLUMN_SOURCE_NAME = 1
+
+# Source code root path column index.
+COLUMN_SOURCE_ROOT = 2
+
+# Source code path filter pattern column index.
+COLUMN_PATH_PATTERN = 3
+
+# Source code content filter pattern column index.
+COLUMN_CONTENT_PATTERN = 4
+
+# Comments column index
+COLUMN_COMMENTS = 6
+
+# Type name column beginning index.
+COLUMN_EXPORT_TYPE_BEGIN = 7
+
+SHELL_CMD_TEMPLATE = 'rsync -r --links {exopt} -f=". {mergefile}" {src} {dest}'
+
+'''
+Use these arguments:
+
+export_src.py \
+-i /home/zhoubo/develop/leo/fuchsia_workspace/nebula/docs/nebula/design/index.xlsx \
+-r /home/zhoubo/develop/sdk/NBL_SDK_V1.0.17.4-PREVIEW-nfc_readonly-nebula-1.0.17-BUILD-0_20200527_181408 \
+-t TEEI \
+-o /home/zhoubo/develop/sdk/TEEI_SDK \
+-s sdk
+
+will set these variables:
+
+g_type = 'TEEI'
+g_index = '/home/zhoubo/develop/leo/fuchsia_workspace/nebula/docs/nebula/design/index.xlsx'
+g_root = '/home/zhoubo/develop/sdk/NBL_SDK_V1.0.17.4-PREVIEW-nfc_readonly-nebula-1.0.17-BUILD-0_20200527_181408'
+g_output = '/home/zhoubo/develop/sdk/TEEI_SDK'
+g_sheet = 'sdk'
+'''
+
+g_type = None
+g_index = None
+g_root = None
+g_output = None
+g_debug = False
+g_sheet = None
+
+def showUsage():
+    print 'Usage:'
+    print os.path.basename(sys.argv[0]) + ' [options]... [value]...'
+    print 'options:'
+    print '  -h, --help      show help information.'
+    print '  -i, --index     File path of the file index.xlsx.'
+    print '  -s, --sheet     Name of sheet in index file.'
+    print '  -t, --type      Name of column in sheet of index file. value of cell is Y.'
+    print '  -r, --root      Root path of Nebula source code.'
+    print '  -o, --output    Path of the output directory.'
+    print '  -d, --debug     Using debug mode.(Not copy anything)'
+
+try:
+    opts, args = getopt.getopt(
+        sys.argv[1:], 't:i:r:o:ds:h',
+        ['type=', 'index=', 'root=', 'output=', 'debug', 'sheet=', 'help'])
+except getopt.GetoptError:
+    showUsage()
+    sys.exit(1)
+
+if len(opts) == 0:
+    showUsage()
+    sys.exit(1)
+
+for optName, optValue in opts:
+    if optName in ('-t', '--type'):
+        g_type = optValue
+    elif optName in ('-i', '--index'):
+        g_index = optValue
+    elif optName in ('-r', '--root'):
+        g_root = optValue
+    elif optName in ('-o', '--output'):
+        g_output = optValue
+    elif optName in ('-d', '--debug'):
+        g_debug = True
+    elif optName in ('-s', '--sheet'):
+        g_sheet = optValue
+    elif optName in ('-h', '--help'):
+        showUsage()
+        sys.exit(0)
+    else:
+        print 'Unknown option ' + optName
+        showUsage()
+        sys.exit(1)
+
+if g_type == None:
+    print '-t, --type Can not be None.'
+    showUsage()
+    exit(1)
+
+if g_index == None:
+    print '-i, --index Can not be None.'
+    showUsage()
+    exit(1)
+
+if g_sheet == None:
+    print '-s, --sheet Can not be None.'
+    showUsage()
+    exit(1)
+
+if g_root == None:
+    print '-r, --root Can not be None.'
+    showUsage()
+    exit(1)
+
+if g_output == None:
+    print '-o, --output Can not be None.'
+    showUsage()
+    exit(1)
+
+def findTypeColIndex(exportType):
+    result = None
+    typeColIndex = COLUMN_EXPORT_TYPE_BEGIN
+    while g_indexWS.cell(1, typeColIndex).value:
+        curType = g_indexWS.cell(1, typeColIndex).value
+        if curType == g_type: #Find the colum which is named g_type
+            result = typeColIndex
+            break
+        typeColIndex = typeColIndex + 1
+    return result
+
+def deleteAllTypeCols():
+    typeColIndex = COLUMN_EXPORT_TYPE_BEGIN
+    while g_indexWS.cell(1, typeColIndex).value:
+        print "Deleting colum: " + g_indexWS.cell(1, typeColIndex).value
+        g_indexWS.delete_cols(typeColIndex, 1)
+
+def convertLinkCells(rowBeginIndex, rowEndIndex):
+    for curRow in range(rowBeginIndex, rowEndIndex):
+        linkCellIndex = curRow
+        linkCell = g_indexWS.cell(curRow, COLUMN_SOURCE_ROOT)
+        linkCellText = linkCell.value
+        if linkCellText != None:
+            print "Setting link " + linkCellText
+            linkCell.hyperlink = linkCellText
+            linkCell.font = Font(color='000000FF', underline='single')
+        curRow = curRow + 1
+
+try:
+    g_indexWB = load_workbook(g_index)
+    g_indexWS = g_indexWB[g_sheet]
+    g_tempPath = os.path.join(g_output, "._temp");
+    g_exportIndexPath = os.path.join(g_output, "index.xlsx");
+except Exception, err:
+    print str(err)
+    sys.exit(1)
+
+g_matchTypeIndex = findTypeColIndex(g_type)
+if g_matchTypeIndex == None:
+    print "Can not find the matched type colum. Please check input type name."
+    exit(1)
+
+# Export all documents which is marked 'Y' in type column.
+curRowIndex = ROW_SCAN_BEGIN
+needStop = False
+while needStop != True:
+    srcName = g_indexWS.cell(curRowIndex, COLUMN_SOURCE_NAME).value
+    srcRoot = g_indexWS.cell(curRowIndex, COLUMN_SOURCE_ROOT).value
+    pathPattern = g_indexWS.cell(curRowIndex, COLUMN_PATH_PATTERN).value
+    contentPattern = g_indexWS.cell(curRowIndex, COLUMN_CONTENT_PATTERN).value
+    needExport = g_indexWS.cell(curRowIndex, g_matchTypeIndex).value
+    if srcName != None:
+        if needExport != None and needExport.upper() == 'Y':
+            if not os.path.exists(g_output):
+                print 'Making dir ' + g_output
+                os.makedirs(g_output)
+            if not os.path.exists(g_tempPath):
+                print 'Making dir ' + g_tempPath
+                os.makedirs(g_tempPath)
+            srcRootPath = os.path.join(g_root, srcRoot)
+            if os.path.isdir(srcRootPath):
+                srcRootPath = os.path.join(srcRootPath, "")
+            destRootPath = os.path.join(g_output, srcRoot)
+            tempFilePath = os.path.join(g_tempPath, str(curRowIndex));
+            if os.path.exists(srcRootPath):
+                tempfileFd = open(tempFilePath, 'w')
+                if pathPattern != None and len(pathPattern) > 0:
+                    tempfileFd.write(pathPattern)
+                else:
+                    tempfileFd.write("")
+                tempfileFd.close()
+                if g_debug:
+                    syncCmd = SHELL_CMD_TEMPLATE.format(
+                        exopt="-nv",
+                        mergefile=tempFilePath,
+                        src=srcRootPath,
+                        dest=destRootPath)
+                else:
+                    syncCmd = SHELL_CMD_TEMPLATE.format(
+                        exopt="",
+                        mergefile=tempFilePath,
+                        src=srcRootPath,
+                        dest=destRootPath)
+                if not os.path.exists(destRootPath):
+                    print 'Making dir ' + destRootPath
+                    os.makedirs(destRootPath)
+                print "Synchronizing " + srcRoot + ": " + syncCmd
+                if os.system(syncCmd) != 0:
+                    print "Synchronizing " + srcRoot + " failed."
+                    exit(1)
+                if contentPattern != None and len(contentPattern) > 0:
+                    os.chdir(destRootPath);
+                    #contentPattern = contentPattern.format(root=destRootPath)
+                    print "Filtering content: " + contentPattern
+                    if os.system(contentPattern) != 0:
+                        print "Filtering " + srcRoot + " failed."
+                        exit(1)
+            else:
+                needStop = True
+                print "File " + srcRootPath + " not exists."
+                exit(1)
+    else:
+        needStop = True
+    curRowIndex = curRowIndex + 1
+
+# Delete rows and columns which are not needed.
+curRowIndex = ROW_SCAN_BEGIN
+needStop = False
+while needStop != True:
+    srcName = g_indexWS.cell(curRowIndex, COLUMN_SOURCE_NAME).value
+    srcRoot = g_indexWS.cell(curRowIndex, COLUMN_SOURCE_ROOT).value
+    needExport = g_indexWS.cell(curRowIndex, g_matchTypeIndex).value
+    needIncrease = True
+    if srcName != None:
+        if needExport == None or len(needExport) == 0 or needExport.upper() != 'Y':
+            print "Deleting row: " + srcName + " " + srcRoot
+            g_indexWS.delete_rows(curRowIndex, 1)
+            needIncrease = False
+    else:
+        needStop = True
+
+    if needIncrease == True:
+        curRowIndex = curRowIndex + 1
+
+deleteAllTypeCols()
+
+g_indexWS.delete_cols(COLUMN_COMMENTS, 1)
+g_indexWS.delete_cols(COLUMN_CONTENT_PATTERN, 1)
+g_indexWS.delete_cols(COLUMN_PATH_PATTERN, 1)
+
+convertLinkCells(ROW_SCAN_BEGIN, g_indexWS.max_row)
+
+# Delete unused sheets.
+for sheetName in g_indexWB.sheetnames:
+    if sheetName != g_sheet:
+        print "Removing sheet: " + sheetName
+        g_indexWB.remove(g_indexWB[sheetName])
+
+print "Saving " + g_exportIndexPath
+g_indexWB.save(g_exportIndexPath)

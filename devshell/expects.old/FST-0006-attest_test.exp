@@ -1,0 +1,108 @@
+set env(QEMU_IP) "$env(FUCHSIA_IP)"
+
+#exp_internal 1
+
+# Sign Attest TA and Copy to QEMU
+set timeout 30
+spawn fx ta sign nbl_attest_srv
+set run_ta $spawn_id
+expect {
+    -i $run_ta timeout {
+        printf "Sign TA failed\n"
+        exit 1
+    }
+
+    -i $run_ta -re {TA Provision files output path: ([0-9a-z.A-Z\/_-]+)\r\n}
+}
+set ta_out_dir $expect_out(1,string)
+spawn scp -r $ta_out_dir root@$env(FUCHSIA_IP):/root/ree/provision/
+set run_ta $spawn_id
+expect -i $run_ta "$ "
+
+# Update and run attest TA
+send -i $ree "echo update-ta > /tmp/attestd_fifo\r"
+set timeout 60
+expect {
+    -i $ree timeout {
+        printf "Start attest service timeout\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "Ready to service request"
+}
+
+# Wait for TA ready
+sleep 2
+
+# Notify attest TA to start service
+send -i $ree "echo start-service > /tmp/attestd_fifo\r"
+set timeout 60
+expect {
+    -i $ree timeout {
+        printf "Start attest service timeout\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "Attestation service started"
+}
+
+# Install and run test TA by OTrP
+set timeout 60
+spawn fx ta run nbl_attest_test
+set run_ta $spawn_id
+expect {
+    -i $run_ta timeout {
+        printf "Install and run test TA TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $run_ta "Are you sure you want to continue connecting (yes/no)? " {
+        send -i $run_ta "yes\r"
+        exp_continue
+    }
+
+    -i $run_ta "Done."
+}
+
+# Check test result
+set timeout 120
+expect {
+    -i $ree timeout {
+        printf "Run test cases TIMEOUT !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree -re {\[  PASSED  \] [0-9]+ tests.}
+}
+
+sleep 2
+set timeout 10
+send -i $ree "\r"
+expect {
+    -i $ree timeout {
+        printf "Expect test result TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree -re {[0-9]+ FAILED TEST} {
+        printf "TEST FAILED !!!\n"
+        exit 1
+    }
+
+    -i $ree "root@FVP:/ "
+}

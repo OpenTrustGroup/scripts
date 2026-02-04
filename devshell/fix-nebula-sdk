@@ -1,0 +1,114 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Fix some problems about nebula sdk in //out/arm64/sdks/nebula
+# 1. The "sdk_atom" copy the files into sdk, but don't keep the mode, such as the far tools is NOT executable.
+#    So add the 'chmod' after 'fx build' (invoking the ninja).
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+echo "Fix Nebula SDK."
+
+# set the permission of scripts and exe.
+OUTPUT_DIR=${FUCHSIA_BUILD_DIR}/sdks/nebula
+
+#################################################
+# copy otrp's scripts
+
+cp ${FUCHSIA_OUT_DIR}/build-ree-trusty-ndk/nbl_daemon/libs/arm64-v8a/nbl_daemon $OUTPUT_DIR/run/otrp
+cp ${FUCHSIA_OUT_DIR}/secmgr/build/secmgr_debug_tool.jar $OUTPUT_DIR/run/otrp/debug_tool/
+cp ${FUCHSIA_OUT_DIR}/secmgr/build/secmgr_provision_tool.jar $OUTPUT_DIR/run/otrp/provision_tool/
+cp ${FUCHSIA_OUT_DIR}/secmgr/build/secmgr_sign_tool.jar $OUTPUT_DIR/run/otrp/sign_tool/
+cp ${FUCHSIA_OUT_DIR}/secmgr/build/nebula_elf_tool.jar $OUTPUT_DIR/run/otrp/elf_tool/
+
+#################################################
+# add executable ability for shell scripts in sdk.
+
+if [ -d "$OUTPUT_DIR/run" ]; then
+    chmod a+x $OUTPUT_DIR/run/*.sh
+    chmod a+x $OUTPUT_DIR/run/otrp/debug_tool/*
+    chmod a+x $OUTPUT_DIR/run/otrp/elf_tool/*
+    chmod a+x $OUTPUT_DIR/run/otrp/sign_tool/*
+    chmod a+x $OUTPUT_DIR/run/otrp/provision_tool/*
+    chmod a+x $OUTPUT_DIR/run/otrp/provision_tool/test/*
+    chmod a+x $OUTPUT_DIR/run/otrp/key_store_tool/*
+    chmod a+x $OUTPUT_DIR/run/otrp/unit_test_script/*
+fi
+
+HOST_X64=$OUTPUT_DIR/host/x64
+chmod a+x $HOST_X64/far
+chmod a+x $HOST_X64/create_archive_manifest
+chmod a+x $HOST_X64/add-file-in-userbootfs
+chmod a+x $HOST_X64/mkbootfs
+chmod a+x $HOST_X64/traceutil
+
+chmod a+x ${OUTPUT_DIR}/examples/nbl_fuzzer/host/start_test.sh
+
+# copy nodejs and css validator to SDK host.
+# used for validate css file of TUI.
+cp -r ${FUCHSIA_DIR}/prebuilts/nodejs-10.16.1/*  ${OUTPUT_DIR}/host
+
+#################################################
+# collect the test exes for release version.
+# - read the line from "manifest
+
+TEST_DIR=$OUTPUT_DIR/test_suite
+rm -rf $TEST_DIR
+mkdir -p $TEST_DIR
+
+# copy $from to $to.
+# $1 : from
+# $2 : to
+function copy_and_mkdir()
+{
+    DIR=`dirname $2`
+    if [ ! -d $DIR ]; then
+        mkdir -p $DIR
+    fi
+    cp $1 $2
+}
+
+# parse the input line, and copy test exe to sdk.
+# $1 : each line in manifest file, format is "to=from".
+function copy_test()
+{
+    # split by "="
+    words=(${1//=/ })
+    to=`echo "system/${words[0]}"`
+    from="${FUCHSIA_BUILD_DIR}/${words[1]}"
+
+    copy_and_mkdir $from ${TEST_DIR}/$to
+}
+
+# k ut all: modules in kernel, cannot test.
+# process-test : cannot create process.
+# zircon-benchmarks : cannot create process.
+cat ${FUCHSIA_BUILD_DIR}/system.manifest | while read line; do
+    if [[ "$line" =~ ^test/.*= ]]; then # copy all files in /system/test
+        copy_test $line
+    elif [[ $line =~ ^bin/zircon_benchmarks= ||
+         $line =~ ^bin/ipctest-main= ||
+         $line =~ ^bin/ipctest-srv= ||
+         $line =~ ^bin/memreftest-main= ||
+         $line =~ ^bin/memreftest-proxy= ||
+         $line =~ ^bin/memreftest-leaf=
+         ]]; then # copy /system/bin/zircon_benchmarks
+        copy_test $line
+    fi
+done
+
+# TODO(luocl:tempporarily put here): Create provision.
+${OUTPUT_DIR}/run/otrp/provision_tool/provision_create_ha.sh -e ${FUCHSIA_OUT_DIR}/arm64/secmgr_test_ree_ha1 \
+    -o ${FUCHSIA_OUT_DIR}/arm64/provision/secmgr_test_ree_ha1
+
+${OUTPUT_DIR}/run/otrp/provision_tool/provision_create_ha.sh -e ${FUCHSIA_OUT_DIR}/arm64/secmgr_test_ree_ha2 \
+    -o ${FUCHSIA_OUT_DIR}/arm64/provision/secmgr_test_ree_ha2
+
+fx-command-run ta sign nbl_attest_srv
+
+echo "Finish Fixing Nebula SDK."

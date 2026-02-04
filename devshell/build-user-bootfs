@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# Copyright 2018 GoldenRiver Technologies Co., Ltd. All rights reserved.
+#
+# The present software is the confidential and proprietary information of
+# GoldenRiver Technologies Co., Ltd. You shall not disclose the present
+# software and shall use it only in accordance with the terms of the license
+# agreement you entered into with GoldenRiver Technologies Co., Ltd.
+# This software may be subject to export or import laws in certain countries.
+
+set -e
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+declare image_name=""
+declare board_name=""
+declare product_name=""
+declare dash_rel=""
+declare dot_rel=""
+declare dash_release=""
+
+function usage {
+  cat << END
+
+usage: fx $(basename ${0}) <options>
+
+Options:
+  -b: Build image. ex: mtkv8-p60, mtkv8-begonia or qemu-virt
+
+  -r: Use release image.
+
+  -h: Print this usage message.
+
+END
+}
+
+while getopts "b:r" opt; do
+  case "${opt}" in
+    b) image_name="${OPTARG}" ;;
+    r) dash_rel="-rel" ; dot_rel=".rel" ; dash_release="-release" ;;
+    h) usage ; exit 0 ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+shift $(($OPTIND - 1))
+
+if [[ -z ${image_name} ]]; then
+    usage
+    echo "Image name is empty"
+    exit 1
+fi
+
+declare board_args=(${image_name//-/ })
+declare board_name=${board_args[0]}
+declare product_name=${board_args[1]}
+
+echo "board name: ${board_name}"
+echo "product name: ${product_name}"
+
+cd ${FUCHSIA_OUT_DIR}/arm64
+
+${FUCHSIA_OUT_DIR}/build-zircon/tools/mkbootfs -o boot_bootfs_${image_name}${dash_rel}.bin --depfile boot_bootfs_${image_name}${dash_rel}.bin.d --target=boot ../build-zircon/build-venus-hee/${board_name}-mdi.bin boot.manifest.${image_name}${dash_rel} cmdline${dot_rel}.bin
+${FUCHSIA_OUT_DIR}/build-zircon/tools/mkbootfs -o system_bootfs_${image_name}${dash_rel}.bin --depfile system_bootfs_${image_name}${dash_rel}.bin.d system.manifest.${image_name}${dash_rel}
+${FUCHSIA_OUT_DIR}/build-zircon/tools/mkbootfs -o bootdata-fs-${image_name}${dash_rel}.bin --depfile bootdata-fs-${image_name}${dash_rel}.bin.d boot_bootfs_${image_name}${dash_rel}.bin system_bootfs_${image_name}${dash_rel}.bin
+${FUCHSIA_OUT_DIR}/build-zircon/tools/mkbootfs -o bootdata-combo-${image_name}${dash_rel}.bin --depfile bootdata-combo-${image_name}${dash_rel}.bin.d --header ../build-zircon/build-venus-hee/${board_name}-boot-shim.bin --header-align 65536 ../build-zircon${dash_release}/build-venus-hee/zircon.bin bootdata-fs-${image_name}${dash_rel}.bin bootdata-plid-${image_name}${dash_rel}.bin
+
+echo build user bootfs image successfully !!!

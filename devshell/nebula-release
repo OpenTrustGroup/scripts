@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### release the Nebula SDK and PDK
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/release_lib.sh
+
+function usage {
+  cat << END
+
+usage: fx $(basename ${0}) <options>
+
+Options:
+  -a: NO clean before building
+  -b: NO qemu tests
+  -c: Official branch name
+  -k: secmgr key path
+  -n: Build number
+  -N: NOT Pack NDK
+  -o: Release out directory
+  -Q: NOT Pack QEMU
+  -t: Gerrit topic
+  -T: NOT Pack TOOLCHIANS (Clang + Linaro GCC)
+  -r: Release type (internal/official/developer)
+  -R: Arguments for run-venus
+  -s <snapshot>: Jiri snapshot xml, filename format: "NBL_SDK_V0.00_20180801_000000.xml"
+  -u <target:method:args>: Specify targets to upload, upload methods, and arguments, separate by ';'
+      This script internally calls "nbl-upload-\${target}-\${method}" and pass \${args} to it.
+      Ex1. sdk:rsync:server:passwd:rpath, calls function nbl-upload-sdk-rsync, passed server,
+      passwd, and rpath as \${1}, \${2}, \${3} to it.
+      Ex2. sdk:rsync:server:passwd:rpath;snapshot:scp:server:passwd:rpath, uploads sdk and snapshot.
+  -v <version>: Internal version, format: "0.0.0"
+
+  -h: Print this usage message.
+
+END
+}
+
+function internal-get-last-version {
+  last_version=$(echo ${internal_version} | grep -o -E "[0-9]{1,}\.[0-9]{1,}")
+  tmp_no=$(echo ${internal_version} | awk -F"." '{print $3}')
+  if [[ ${tmp_no} -gt 0 ]]; then
+    tmp_no=$((${tmp_no} - 1))
+  fi
+  last_version+=".${tmp_no}"
+  last_tag_name="internal-${last_version}"
+}
+
+function official-get-last-version {
+  # get last version of official release
+  last_version=${version_name}
+  echo "version name=${version_name}"
+  version_name+=".${build_num}"
+  tmp_no=${build_num}
+  if [[ $tmp_no -gt 0 ]]; then
+    tmp_no=$((${tmp_no} - 1))
+  fi
+  last_version+=".${tmp_no}"
+  last_tag_name="${release_type}-${last_version}"
+}
+
+function init-common-params {
+  local tmp_no=""
+
+  version_time=$(date +%Y%m%d_%H%M%S)
+
+  sdk_version="NBL_SDK_V${version_name}_${version_time}"
+  pdk_version=${sdk_version/_SDK_/_PDK_}
+  dbgsym_version=${sdk_version/_SDK_/_DBSYM_}
+  tag_name="${release_type}-${version_name}"
+  linux_patch_version="NBL_LINUX_V${version_name}_${version_time}"
+
+  echo "internal_version=${internal_version}"
+  echo "sdk_version=${sdk_version}"
+  echo "pdk_version=${pdk_version}"
+  echo "linux_patch_version=${linux_patch_version}"
+  echo "tag_name=${tag_name}"
+  echo "last_tag_name=${last_tag_name}"
+  echo "version_name=${version_name}"
+  echo "last_version=${last_version}"
+}
+
+
+function nbl-deploy-to-release-out-dir {
+  local release_type_str=$1
+  local local_release_dir="${FUCHSIA_OUT_DIR}/_release"
+  local out_dir="${release_out_dir}/${release_type_str}/${version_name}"
+
+  echo "Release to ${out_dir}"
+
+  if [[ -d ${out_dir} ]]; then
+    echo "Remove existed directory ${out_dir}"
+    rm -fr ${out_dir}
+  fi
+
+  if [[ -d $local_release_dir ]]; then
+    echo "Copying SDK/PDK/Linux"
+    mkdir -p ${out_dir}
+    pushd ${local_release_dir}
+    find . -type f -maxdepth 1 -exec mv {} ${out_dir} \;
+    popd
+    rm -fr "${local_release_dir}"
+  fi
+
+  echo "Copying nebula binaries"
+  mkdir -p "${out_dir}/arm64"
+  pushd "${FUCHSIA_OUT_DIR}/arm64"
+  find . -type f -maxdepth 1 -name "bootdata-combo-*.bin" -exec cp -a {} ${out_dir}/arm64 \;
+  popd
+  nbl-make-sha1-by-dir ${out_dir}/arm64
+
+  echo "Packing debug symbol files"
+  pushd "${FUCHSIA_OUT_DIR}"
+  find . -type f -name "*.elf" > ./dbgsym_files
+  tar --xform='s/^\./dbgsym/' -zcvf ${out_dir}/${dbgsym_version}.tgz -T ./dbgsym_files
+  popd
+
+  nbl-make-changelist ${out_dir}
+}
+
+function internal-release {
+  echo "================"
+  echo "internal-release"
+  echo "================"
+
+  # Assin internal version name
+  if [[ -z "${internal_version}" ]]; then
+    echo "Internal version is empty."
+    exit 1
+  fi
+  if [[ ! $internal_version =~ ^[0-9]{1,}\.[0-9]{1,}\.[0-9]{1,} ]]; then
+    echo "Invalid version format."
+    exit 1
+  fi
+  version_name=${internal_version}
+
+  internal-get-last-version
+
+  init-common-params
+
+  nbl-checkout-latest
+  nbl-make-gittag
+  build-common ${release_type}
+
+  nbl-deploy-to-release-out-dir ${release_type}
+}
+
+function official-release {
+  echo "================"
+  echo "official-release"
+  echo "================"
+
+  # Assign official version name
+  if [[ -z ${branch_name} || -z ${build_num} ]]; then
+    echo "Invalid parameters. branch_name: ${branch_name} build_num: ${build_num}"
+    exit 1
+  fi
+  version_name=$(echo ${branch_name} | awk -F"-" '{print $2}')
+
+  official-get-last-version
+
+  init-common-params
+
+  nbl-checkout-branch
+  nbl-make-gittag
+  build-common ${release_type}
+
+  nbl-deploy-to-release-out-dir ${release_type}
+}
+
+function ali-release {
+  echo "==========="
+  echo "ali release"
+  echo "==========="
+
+  if [[ -z ${secmgr_key_path} ]]; then
+    echo "Ali key path is empty."
+    exit 1
+  fi
+
+  echo "Ali key path: ${secmgr_key_path}"
+
+  no_clean_build="true"
+  no_qemu_tests="true"
+  build-common "ali"
+
+  nbl-deploy-to-release-out-dir "ali"
+}
+
+function developer-release {
+  echo "================="
+  echo "developer-release"
+  echo "================="
+
+  local topic_str="DEVELOPER"
+
+  if [[ ! -z ${gerrit_topic} ]]; then
+    topic_str=${gerrit_topic}
+  fi
+
+  if [[ -z ${build_num} ]]; then
+    echo "Invalid parameters. build_num:${build_num}"
+    exit 1
+  fi
+
+  # Assign developer version name
+  version_name="${internal_version}-PREVIEW-${topic_str}-BUILD-${build_num}"
+
+  internal-get-last-version
+
+  init-common-params
+
+  if [[ -z ${gerrit_topic} ]]; then
+    nbl-checkout-latest
+  else
+    nbl-checkout-topic
+  fi
+  build-common ${release_type}
+
+  nbl-deploy-to-release-out-dir ${release_type}
+}
+
+function build-common {
+  local rel_type=$1
+
+  rm -fr "${FUCHSIA_OUT_DIR}/_snapshot/"
+  rm -fr "${FUCHSIA_OUT_DIR}/_release/"
+
+  [[ ${no_clean_build} = "false" ]] && nbl-clean
+
+  if [[ ${rel_type} = "ali" ]]; then
+    nbl-full-build ${secmgr_key_path}
+  else
+    nbl-full-build
+  fi
+
+  [[ ${no_qemu_tests} = "false" ]] && nbl-qemu-tests
+
+  if [[ ! $rel_type = "ali" ]]; then
+    nbl-make-sdk
+    nbl-make-pdk
+    nbl-make-linux-patch
+  fi
+
+  echo "build-common finished."
+}
+
+function nebula-release {
+  echo "release_type=${release_type}"
+
+  if [[ $release_type = "internal" ]]; then
+    internal-release
+  elif [[ $release_type = "official" ]]; then
+    official-release
+    ali-release
+  elif [[ $release_type = "developer" ]]; then
+    developer-release
+    return 0
+  else
+    echo "Invalid relase type."
+    exit 1
+  fi
+
+  nbl-make-snapshot
+  nbl-upload-targets
+}
+
+declare release_type=""
+declare run_venus_args=""
+declare branch_name=""
+declare release_out_dir=""
+declare version_name=""
+declare last_version=""
+declare pdk_version=""
+declare dbgsym_version=""
+declare linux_patch_version=""
+declare tag_name=""
+declare last_tag_name=""
+declare internal_version=""
+declare sdk_version=""
+declare sdk_options=""
+declare sdk_snapshot=""
+declare no_clean_build="false"
+declare no_qemu_tests="false"
+declare upload_args=""
+declare sdktgz_suffix=""
+declare secmgr_key_path=""
+declare gerrit_topic=""
+declare version_time=""
+declare build_num=""
+
+while getopts "abc:hk:n:No:Qt:Tr:R:s:u:v:" opt; do
+  case "${opt}" in
+    a) no_clean_build="true" ;;
+    b) no_qemu_tests="true" ;;
+    c) branch_name="${OPTARG}" ;;
+    k) secmgr_key_path="${OPTARG}" ;;
+    n) build_num="${OPTARG}" ;;
+    N) sdk_options+=" -N" ; sdktgz_suffix+="_N" ;;
+    o) release_out_dir="${OPTARG}" ;;
+    Q) sdk_options+=" -Q" ; sdktgz_suffix+="_Q" ;;
+    t) gerrit_topic="${OPTARG}" ;;
+    T) sdk_options+=" -T" ; sdktgz_suffix+="_T" ;;
+    r) release_type="${OPTARG}" ;;
+    R) run_venus_args="${OPTARG}" ;;
+    s) sdk_snapshot="${OPTARG}" ;;
+    u) upload_args="${OPTARG}" ;;
+    v) internal_version="${OPTARG}" ;;
+    h) usage ; exit 0 ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+shift $(($OPTIND - 1))
+
+if [[ -z "${release_out_dir}" ]]; then
+  echo "Release output directory is empty."
+  exit 1
+else
+  echo "release_out_dir=${release_out_dir}"
+  mkdir -p ${release_out_dir}
+fi
+
+if [[ -z "${run_venus_args}" ]]; then
+  echo "run_venus_args is empty."
+  exit 1
+else
+  echo "run_venus_args(base64)=${run_venus_args}"
+  run_venus_args=$(echo ${run_venus_args} | base64 --decode)
+  echo "run_venus_args(plain text)=${run_venus_args}"
+fi
+
+nebula-release

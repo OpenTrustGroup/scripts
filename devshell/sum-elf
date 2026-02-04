@@ -1,0 +1,122 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Make a summary about the elf by build information.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+# options:
+# -o : output path
+# -t : with two toolchains for ree and hee.
+function help()
+{
+    echo "command [option] [file]"
+    echo "  file: elf file name which should have \"\$file.o.info\" file(limited to garnet)."
+    echo "  [-s n/s]: sort by n(name)/s(size)."
+    echo "  [-h]: show help."
+}
+
+ELF_NAME=
+SORT_TYEP=
+while getopts 's:h' OPT; do
+    case $OPT in
+        h)
+            help
+            exit 0;;
+        s)
+            SORT_TYPE=$OPTARG
+            ;;
+        ?)
+            ELF_NAME=$OPT
+            ;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+ELF_NAME=$*
+
+cd $FUCHSIA_OUT_DIR
+
+# find the *.o.info.
+if [ -z "$ELF_NAME" ]; then
+    echo "Please input elf name"
+    exit 1
+fi
+
+ELF_PATH=`find -name ${ELF_NAME}.o.info`
+if [ -z "$ELF_PATH" ]; then
+    echo "Cannot find ${ELF_NAME}."
+    exit 1
+fi
+
+# analysis this *.o.info
+
+unkown_objs=
+# sum with .o and .a, because these modules will be added into elf.
+sum_bytes=
+# linked library, but not all.
+link_libs=
+# temp file
+tmp_file=`mktemp -u`
+
+if [ "$SORT_TYPE" = 's' ]; then
+    sort_cmd="sort -n"
+else
+    sort_cmd="sort"
+fi
+
+# $1 : path
+# $2 : size
+function show_line()
+{
+    if [ "$SORT_TYPE" = 's' ]; then
+        echo "$2 : $1"
+    else
+        echo "$1 : $2"
+    fi
+}
+
+function analysis_o_info()
+{
+    for obj in `cat $ELF_PATH`; do
+        name=`basename $obj`
+        size=`du -s -b $FUCHSIA_OUT_DIR/arm64/${obj} | awk '{print $1}'`
+        if [[ "$name" =~ .*\.so ]]; then
+            link_libs="$obj, $link_libs"
+        elif [[ "$name" =~ .*\.a ]]; then
+            sum_bytes=$((${sum_bytes} + ${size}))
+            show_line $obj $size
+        elif [[ "$name" =~ .*\.o ]]; then
+            sum_bytes=$((${sum_bytes} + ${size}))
+            show_line $obj $size
+        else
+            unkown_type="$name, $unkown_objs"
+        fi
+    done
+}
+
+function sum()
+{
+    if [ -n "$unkown_objs" ]; then
+        echo "Find unkown type: $unkown_objs".
+    fi
+
+    echo "Sum:"
+    sum_bytes_m=`echo "scale=2;${sum_bytes}/1024/1024" | bc`
+    echo "  size: $sum_bytes = ${sum_bytes_m}m"
+    echo "  so: $link_libs"
+    if [ -n "$unkown_type" ]; then
+        echo "  unknown: $unkown_type"
+    fi
+}
+
+analysis_o_info > $tmp_file
+${sort_cmd} $tmp_file
+sum
+
+rm -rf $tmp_file

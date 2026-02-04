@@ -1,0 +1,33 @@
+set timeout 60
+
+if { "$env(USE_RELEASE)" == "true" } {
+    expect {
+        -i $console timeout {
+            printf "Venus: bootup to shell TIMEOUT !!!\n"
+            exit 1
+        }
+
+        # In release build, sh is not installed.
+        -i $console "devmgr: shell initialized."
+    }
+} else {
+    expect {
+        -i $console timeout {
+            printf "Venus: bootup to shell TIMEOUT !!!\n"
+            exit 1
+        }
+
+        -i $console "$ "
+    }
+
+    send -i $console "\r"
+    expect {
+        -i $console timeout {
+            printf "Venus: sending enter TIMEOUT !!!\n"
+            exit 1
+        }
+        -i $console "$ "
+    }
+}
+
+printf "Venus HEE is ready.\n"

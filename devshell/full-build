@@ -1,14 +1,83 @@
 #!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
 # Copyright 2017 The Fuchsia Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-### build zircon, then build fuchsia
-## build zircon, then build fuchsia
+# build zircon, then build fuchsia
 
 set -e
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+ARGS=`getopt -o h --long secmgr_key_path: --long nebula-only -n 'full-build.sh' -- "$@"`
+if [ $? != 0 ]; then
+    echo "Terminating..."
+    exit 1
+fi
 
-fx-command-run build-zircon
+eval set -- "${ARGS}"
+
+declare nebula_only="false"
+
+while true
+do
+    case "$1" in
+        --secmgr_key_path)
+            secmgr_key_path=$2;
+            shift 2
+            ;;
+        --nebula-only)
+            nebula_only="true"
+            shift
+            ;;
+        --)
+            shift;
+            break
+            ;;
+        *)
+         break;;
+    esac
+done
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+source "${FUCHSIA_DIR}/build/bazel_symlink.sh"
+
+# NOTE(GRT): Enable zircon apps asan only if --variant=asan.
+ASAN_OPT=$(echo "${FUCHSIA_VARIANT}" | grep -q \"asan\" && echo -A || :)
+
+fx-command-run build-zircon ${ASAN_OPT} USE_CLANG=true WITH_SYZKALLER=${WITH_SYZKALLER}
+# GRT: If need openssl, uncomment this command. And detail is in file "third_party/openssl/README.nebula.md".
+fx-command-run build-openssl
 fx-command-run build
+
+if [[ -z "${ZIRCON_PROJECT}" ]]; then
+  exit 0
+fi
+
+if [[ "${ZIRCON_PROJECT}" == "venus-tee" ]]; then
+  exit 0
+fi
+
+if [[ "${nebula_only}" == "true" ]]; then
+  exit 0
+fi
+
+fx-command-run bazel-ree
+
+# syz-manager depends on some libraries under third_party/ree-trusty,
+# so we need to run fx bazel-ree first, and then can build syz-manager.
+if [[ "${WITH_SYZKALLER}" -eq 1 ]]; then
+  pushd ${FUCHSIA_DIR}/third_party/syzkaller_nbl > /dev/null
+  ./build_all.sh --manager
+  popd > /dev/null
+
+  # repack the linux rootfs
+  fx-command-run bazel-ree
+fi
+
+fx-command-run bazel-host
+
+fx-command-run build-atf
+
+fx-show-elapsed-time

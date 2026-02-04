@@ -1,0 +1,63 @@
+#!/bin/bash
+# Copyright 2019 GoldenRiver Technology Co., Ltd. All rights reserved.
+
+### Document is in file "third_party/openssl/README.nebula.md".
+### build openssl version 1.1.1
+### - openssl dependies zircon's libraries, so build it after zircon, but before garnet.
+###   because "fx build" which creates the image of HEE needs shared-lib of openssl.
+### TODO
+### 1. USE asm, boringssl in third-party also doesn't use it.
+
+set -e
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+# In output-dir, run "openssl/config", and then all intermediate and final objects are put here.
+# shared: create the shared-library. The static library is created by default.
+# no-asm : don't use asm. Original third-party/boringssl doesn't use asm.
+# default support multiple-threads, if not set "no-threads".
+
+NBL_SYSROOT=${FUCHSIA_OUT_DIR}/arm64/sdks/nebula
+TOOLCHAIN=${FUCHSIA_DIR}/buildtools/linux-x64/clang
+OUTPUT_DIR=${FUCHSIA_OUT_DIR}/build-openssl
+SYSROOT="--sysroot=${FUCHSIA_OUT_DIR}/build-zircon-release/build-${ZIRCON_PROJECT}/sysroot"
+
+# - The path of this var should end with "/".
+export CROSS_COMPILE=${TOOLCHAIN}/bin/
+
+export CC=clang
+export CFLAGS="${SYSROOT} --target=aarch64-fuchsia -no-canonical-prefixes"
+
+export CXX=clang++
+export CXXFLAGS="${SYSROOT} --target=aarch64-fuchsia -no-canonical-prefixes"
+
+# LD is invalid, but ld is OK. (why?)
+export LD=clang++
+export LDFLAGS="${SYSROOT} --target=aarch64-fuchsia -Wl,--icf=all -z max-page-size=4096 \
+  -L${FUCHSIA_OUT_DIR}/build-zircon-release/build-${ZIRCON_PROJECT}/system/ulib/fdio \
+  -L${FUCHSIA_OUT_DIR}/build-zircon-release/build-${ZIRCON_PROJECT}/system/ulib/zircon \
+  -L${FUCHSIA_OUT_DIR}/build-zircon-release/build-${ZIRCON_PROJECT}/system/ulib/c \
+  -lfdio -lzircon"
+
+export AR=llvm-ar
+
+export RANLIB=llvm-ranlib
+
+# Make output dir.
+
+mkdir -p ${OUTPUT_DIR}
+cd ${OUTPUT_DIR}
+
+# Run config
+# - The folder running "config" will be the output folder.
+${FUCHSIA_DIR}/third_party/openssl/config no-shared no-asm no-ui-console no-autoalginit
+
+# Make
+make -j
+
+# - strip all so. (boringssl' so is libcrypto.so and libssl.so)
+#${CROSS_COMPILE}llvm-objcopy --strip-all-gnu libcrypto.so.1.1 libopenssl_crypto.so
+#${CROSS_COMPILE}llvm-objcopy --strip-all-gnu libssl.so.1.1 libopenssl_ssl.so
+
+fx-show-elapsed-time

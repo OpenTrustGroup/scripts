@@ -1,0 +1,15 @@
+sleep 1
+# clear anything in buffer (i.e. * match anything)
+expect -i $console *
+send -i $console "\r"
+sleep 1
+set timeout 30
+expect {
+    -i $console timeout {
+        printf "HEE PROMPT TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $console -re {(\$\s)+}
+}
+expect -i $console *

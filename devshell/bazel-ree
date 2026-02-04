@@ -1,0 +1,110 @@
+#!/bin/bash
+# Copyright 2020 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build Nebula REE packages by bazel
+
+## usage: fx bazel-ree [--config BAZEL_CONFIG] [--rebuild] [-- <bazel build options>]
+##
+## optional arguments:
+##   --config    BAZEL_CONFIG        Avaliable values: linux_4.9, linux_4.19, linux_5.4
+##   --rebuild                       Force rebuild all packages
+##
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly REE_TRUSTY_PATH="${FUCHSIA_DIR}/third_party/ree-trusty"
+
+declare BAZEL_CONFIG="${BAZEL_CONFIG:-linux_4.9}"
+declare REBUILD="false"
+
+while [[ $# -ne 0 ]]; do
+  case "$1" in
+    --config)
+      if [[ $# -lt 2 ]]; then
+        fx-command-help
+        exit 1
+      fi
+      BAZEL_CONFIG="${2}"
+      shift
+      ;;
+    --rebuild)
+      REBUILD="true"
+      ;;
+    --)
+      shift
+      break
+      ;;
+  esac
+  shift
+done
+
+echo "Bazel Build REE Trusty..."
+
+pushd "${REE_TRUSTY_PATH}" > /dev/null
+cat > version.bzl << EOF
+"""Nebula Version Bazel Helper"""
+
+NEBULA_VERSION_STR = "\"$(git describe --always --tags)\""
+
+# The following provides "NEBULA_VERSION_STR" to genrule
+def _nebula_version_str_impl(ctx):
+  return [
+    platform_common.TemplateVariableInfo({
+      "NEBULA_VERSION_STR": NEBULA_VERSION_STR
+    })
+  ]
+
+nebula_version_str = rule(
+  implementation = _nebula_version_str_impl,
+)
+EOF
+popd > /dev/null
+
+# GCC was removed from NDK r18, use CLANG as variable name should make no confusion
+ANDROID_NDK_CLANG_PATH="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+CLANG_TOOLCHAIN_PREFIX="${BUILDTOOLS_CLANG_DIR}/bin"
+CLANG_TOOLCHAIN_SYSROOT="${LINARO_AARCH64_TOOLCHAIN_HOME}/aarch64-linux-gnu/libc"
+GCC_TOOLCHAIN_PREFIX="${LINARO_AARCH64_TOOLCHAIN_HOME}/bin"
+GCC_TOOLCHAIN_SYSROOT="${LINARO_AARCH64_TOOLCHAIN_HOME}/aarch64-linux-gnu/libc"
+
+declare EXTRA_BAZEL_OPTIONS="--config=${BAZEL_CONFIG}"
+
+if [[ "${REBUILD}" == "true" ]]; then
+  EXTRA_BAZEL_OPTIONS+=" --action_env=\"RAND_VAR=$RANDOM\""
+fi
+
+pushd "${BAZEL_REE_DIR}" > /dev/null
+
+# TODO: Remove these action_env once openssl supports rules_cc instead of rules_foreign_cc.
+bazelisk build //:all \
+  --action_env="CLANG_TOOLCHAIN_PREFIX=${CLANG_TOOLCHAIN_PREFIX}" \
+  --action_env="CLANG_TOOLCHAIN_SYSROOT=${CLANG_TOOLCHAIN_SYSROOT}" \
+  --action_env="GCC_TOOLCHAIN_PREFIX=${GCC_TOOLCHAIN_PREFIX}" \
+  --action_env="GCC_TOOLCHAIN_SYSROOT=${GCC_TOOLCHAIN_SYSROOT}" \
+  --action_env="ANDROID_NDK_HOME=${ANDROID_NDK_HOME}" \
+  --action_env="ANDROID_SDK_HOME=${ANDROID_SDK_HOME}" \
+  --action_env="CCACHE_DIR=${CCACHE_DIR}" \
+  --action_env="TEE_SPD=${TEE_SPD}" \
+  ${EXTRA_BAZEL_OPTIONS} \
+  $@
+
+popd > /dev/null
+
+
+# TODO: Remove backward compatible stuffs when all modules bazelized.
+
+mkdir -p ${FUCHSIA_OUT_DIR}/arm64/linux/
+ln -sf ${BAZEL_REE_OUT}/linux/arch/arm64/boot/Image ${FUCHSIA_OUT_DIR}/arm64/linux/Image
+ln -sf ${BAZEL_REE_OUT}/linux-kcov/arch/arm64/boot/Image ${FUCHSIA_OUT_DIR}/arm64/linux/Image.kcov
+ln -sf ${BAZEL_REE_OUT}/linux ${FUCHSIA_OUT_DIR}/build-linux
+ln -sf ${BAZEL_REE_OUT}/linux-kcov ${FUCHSIA_OUT_DIR}/build-linux-kcov
+ln -sf ${BAZEL_REE_OUT}/rootfs ${FUCHSIA_OUT_DIR}/build-linux-rootfs
+
+fx-show-elapsed-time

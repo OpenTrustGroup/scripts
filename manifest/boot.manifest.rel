@@ -1,0 +1,17 @@
+bin/devhost
+bin/devmgr
+bin/fshost
+bin/hwcrypto
+bin/storage
+driver/builtin.so
+driver/dmctl.so
+driver/platform-bus.proxy.so
+driver/platform-bus.so
+lib/ld.so.1
+lib/libasync-default.so
+lib/libdriver.so
+lib/libfdio.so
+lib/libfs-management.so
+lib/liblaunchpad.so
+lib/libtrace-engine.so
+lib/libunittest.so

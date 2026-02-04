@@ -1,0 +1,59 @@
+set timeout 120
+expect {
+    -i $ree timeout {
+        printf "Linux bootup TIMEOUT !!!\n"
+        exit 1
+    }
+    "Kernel panic" {
+        printf "Linux kernel panic !!!\n"
+        exit 1
+    }
+
+    -i $ree "Please press Enter to activate this console. "
+}
+
+printf "Wait for RNG device init...\n"
+set timeout 60
+send -i $ree "\r"
+sleep 1
+send -i $ree "dd if=/dev/random of=/dev/null bs=100 count=1\r"
+expect {
+    -i $ree timeout {
+        printf "RNG device init TIMEOUT!!\n"
+        exit 1
+    }
+
+    -i $ree "root@FVP:/ "
+}
+
+printf "Wait 5 secs for storage service ready...\n"
+sleep 5
+send -i $ree "\r"
+set timeout 5
+expect {
+    -i $ree timeout {
+        printf "Console activate TIMEOUT !!!\n"
+        exit 1
+    }
+    -i $ree "root@FVP:/ "
+}
+printf "Venus REE is ready.\n"
+
+if { "$env(USE_RELEASE)" != "true" } {
+    send -i $console "ST=/system/test; echo \$ST\r"
+    set timeout 5
+    expect {
+        -i $console timeout {
+            printf "Venus: sending enter TIMEOUT !!!\n"
+            exit 1
+        }
+        -i $console "/system/test"
+    }
+    expect {
+        -i $console timeout {
+            printf "Venus: setup ST=/system/test TIMEOUT !!!\n"
+            exit 1
+        }
+        -i $console "$ "
+    }
+}

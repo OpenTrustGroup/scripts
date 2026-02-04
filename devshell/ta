@@ -1,0 +1,241 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### install or run Nebula TA in QEMU
+
+## usage: fx ta <install|run|run-only|sign> <TA_PACKAGE_NAME|TA_BINARY_PATH> [-d]
+##        fx ta list
+##
+## Install/run Nebula TA into/on QEMU
+##   list                 list TA packages
+##   install              install package via secure manager
+##   run                  install and run package via secure manager
+##   run-only             run package via secure manager only
+##   sign                 sign TA package (output path: $NEBULA_OUT/arm64/provision)
+##
+##   TA_PACKAGE_NAME      package name declared in BUILD.gn
+##   TA_BINARY_PATH       TA binary file path
+##
+## example: run attestation test package (third_party/hee-trusty/nbl_attest_srv/BUILD.gn)
+##   $ fx ta run nbl_attest_test
+##
+## example: run attestation test binary file (out/arm64/nbl_attest_test)
+##   $ fx ta run $NEBULA_OUT/arm64/nbl_attest_test
+##
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly OTRP_SDK_PATH="${FUCHSIA_BUILD_DIR}/sdks/nebula/run/otrp/"
+readonly SECMGR_TOOL_PATH="${OTRP_SDK_PATH}/debug_tool"
+readonly PROVISION_TOOL_PATH="${OTRP_SDK_PATH}/provision_tool"
+readonly ELF_TOOL_PATH="${FUCHSIA_BUILD_DIR}/sdks/nebula/run/otrp/elf_tool"
+readonly PACKAGE_PATH="${FUCHSIA_BUILD_DIR}/package"
+
+declare QEMU_SSH_IP=${QEMU_IP:-"192.168.3.53"}
+declare TA_PACKAGE=""
+declare DO_BUILD="false"
+declare DO_INSTALL="false"
+declare DO_RUN="false"
+declare DO_SIGN="false"
+declare ACTION=""
+declare TA_BINARY_FILE_PATH=""
+declare PROVISION_OUT_PATH=""
+declare TA_UUID=""
+declare USE_ADB="false"
+
+declare -a tmp_binary_files
+declare -a binary_files
+declare binary_index
+
+function find_binary_path_in_manifest() {
+  local manifest_file="${PACKAGE_PATH}/${1}/system_manifest"
+  local str=$(cat ${manifest_file} | tr '\n' '&')
+  local regex='.+=(.+)'
+
+  IFS='&' read -r -a tmp_binary_files <<< "${str}"
+
+  for bin in "${tmp_binary_files[@]}"; do
+    if [[ "${bin}" =~ $regex ]]; then
+      >&2 echo "${#binary_files[@]}: ${BASH_REMATCH[1]}"
+      binary_files+=(${BASH_REMATCH[1]})
+    fi
+  done
+
+  case "${#binary_files[@]}" in
+  0)
+    >&2 echo "Cannot find binary path in: \"${manifest_file}\""
+    exit 1
+    ;;
+  1)
+    binary_index=0
+    ;;
+  *)
+    read -p "Please select which binary to install: " binary_index
+    ;;
+  esac
+
+  local index_regex='^[0-9]+$'
+  if ! [[ "${binary_index}" =~ ${index_regex} ]] ; then
+    >&2 echo "Input value is not a number: \"${binary_index}\""
+    exit 1
+  fi
+
+  if [[ ${binary_index} -gt $((${#binary_files[@]}-1)) ]]; then
+    >&2 echo "Invalid binary index: \"${binary_index}\""
+    exit 1
+  fi
+
+  echo ${binary_files[${binary_index}]}
+  return
+}
+
+function get_ta_uuid() {
+  local ta_file="${1}"
+  local tmp_out_file="/tmp/ta_manifest.json"
+  local uuid_regex='"uuid":"([0-9a-f\-]+)"}'
+
+  echo "" > ${tmp_out_file}
+  java -jar ${ELF_TOOL_PATH}/nebula_elf_tool.jar get_manifest \
+       --in_file "${ta_file}" \
+       --out_file ${tmp_out_file} \
+       --far_tool_file ${ELF_TOOL_PATH}/far > /dev/null
+
+  if [[ "$(cat ${tmp_out_file})" =~ $uuid_regex ]]; then
+    echo ${BASH_REMATCH[1]}
+    return
+  else
+    >&2 echo "Cannot find UUID in: \"${ta_file}\""
+    exit 1
+  fi
+}
+
+if [[ "$1" == "list" ]]; then
+  ls -1 ${PACKAGE_PATH}
+  exit 0
+fi
+
+if [[ ! $# -ge 2 ]]; then
+  fx-command-help
+  exit 1
+fi
+
+ACTION=$1
+TA_PACKAGE=$2
+case "$ACTION" in
+install)
+  DO_SIGN="true"
+  DO_INSTALL="true"
+  ;;
+run)
+  DO_SIGN="true"
+  DO_INSTALL="true"
+  DO_RUN="true"
+  ;;
+run-only)
+  DO_RUN="true"
+  ;;
+sign)
+  DO_SIGN="true"
+  ;;
+*)
+  fx-command-help
+  exit 1
+esac
+
+shift 2
+while getopts "d" opt; do
+  case "${opt}" in
+    d) USE_ADB="true";;
+    *) echo "invalid options"; exit 1;;
+  esac
+done
+
+if [[ -f "${TA_PACKAGE}" ]]; then
+  TA_BINARY_FILE_PATH="${TA_PACKAGE}"
+else
+  TA_BINARY_FILE_PATH="$(find_binary_path_in_manifest ${TA_PACKAGE})"
+  DO_BUILD="true"
+fi
+
+declare KEYSTORE_PATH="${OTRP_SDK_PATH}/key_store_test"
+if [[ -n "${SECMGR_RELEASE_KEY}" ]]; then
+  KEYSTORE_PATH="$(dirname "${SECMGR_RELEASE_KEY}")"
+fi
+
+if [[ "${DO_SIGN}" == "true" ]]; then
+  if [[ "${DO_BUILD}" == "true" ]]; then
+    package_info_str=$(grep "ACTION" ${FUCHSIA_BUILD_DIR}/toolchain.ninja | grep ":${TA_PACKAGE}__")
+    package_path_re="//(.+):${TA_PACKAGE}"
+    if [[ "${package_info_str}" =~ ${package_path_re} ]]; then
+      echo "Build Nebula package: ${BASH_REMATCH[1]}:${TA_PACKAGE}"
+      fx-command-run build ${BASH_REMATCH[1]}:${TA_PACKAGE}
+    else
+      echo "Cannot find package real path: \"${TA_PACKAGE}\""
+      exit 1
+    fi
+  fi
+
+  PROVISION_OUT_PATH="${FUCHSIA_OUT_DIR}/arm64/provision/${TA_PACKAGE}"
+
+  if [[ -e "${PROVISION_OUT_PATH}" ]]; then
+    rm -rf ${PROVISION_OUT_PATH}
+  fi
+
+  echo "Sign TA: ${TA_BINARY_FILE_PATH}"
+  echo "keystore: ${KEYSTORE_PATH}"
+
+  ${PROVISION_TOOL_PATH}/provision_create_ha_by_config.sh \
+    -c ${KEYSTORE_PATH} \
+    -e ${TA_BINARY_FILE_PATH} \
+    -o ${PROVISION_OUT_PATH}
+
+  rm -rf ${PROVISION_OUT_PATH}/delete_sd
+  cp ${PROVISION_OUT_PATH}/*/*.json ${PROVISION_OUT_PATH}/
+
+  echo "TA Provision files output path: ${PROVISION_OUT_PATH}"
+fi
+
+if [[ "${DO_INSTALL}" == "true" ]] || [[ "${DO_RUN}" == "true" ]]; then
+  if [[ "${USE_ADB}" == "true" ]]; then
+    # Check ADB devices
+    line_num=$(adb devices |wc -l)
+    if [[ ${line_num} -eq 2 ]]; then
+      echo "No ADB device attached"
+      exit 1
+    fi
+  else
+    # Check QEMU ssh connection
+    ssh_pwd=$(ssh -o ConnectTimeout=3 root@${QEMU_SSH_IP} pwd)
+  fi
+fi
+
+if [[ "${DO_INSTALL}" == "true" ]]; then
+  echo "Install TA: \"${TA_BINARY_FILE_PATH}\""
+  if [[ "${USE_ADB}" == "true" ]]; then
+    adb root
+    adb shell "mkdir -p /data/vendor/nebula/provision/${TA_PACKAGE}"
+    adb push "${PROVISION_OUT_PATH}" "/data/vendor/nebula/provision/"
+    adb shell "nbl_daemon -p /data/vendor/nebula/provision/${TA_PACKAGE}"
+  else
+    scp -r "${PROVISION_OUT_PATH}" root@${QEMU_SSH_IP}:/root/ree/provision/
+    ssh root@${QEMU_SSH_IP} "nbl_daemon -p /root/ree/provision/${TA_PACKAGE}"
+  fi
+fi
+
+if [[ "${DO_RUN}" == "true" ]]; then
+  TA_UUID=$(get_ta_uuid "${TA_BINARY_FILE_PATH}")
+  echo "Run TA, UUID: ${TA_UUID}"
+  if [[ "${USE_ADB}" == "true" ]]; then
+    adb shell "nbl_daemon -l ${TA_UUID}"
+  else
+    ssh root@${QEMU_SSH_IP} "nbl_daemon -l ${TA_UUID}"
+  fi
+fi
+
+echo ""
+echo "Done."

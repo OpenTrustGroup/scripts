@@ -1,0 +1,17 @@
+set cmd "ls /dev/trusty-ipc-dev0"
+send -i $ree "$cmd\r"
+set timeout 5
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+    -i $ree "/dev/trusty-ipc-dev0" {
+        exp_continue
+    }
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+    -i $ree "root@FVP:/ "
+}

@@ -1,0 +1,15 @@
+sleep 1
+# clear anything in buffer (i.e. * match anything)
+expect -i $ree *
+send -i $ree "\r"
+sleep 1
+set timeout 10
+expect {
+    -i $ree timeout {
+        printf "REE PROMPT TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree "root@FVP:/ "
+}
+expect -i $ree *

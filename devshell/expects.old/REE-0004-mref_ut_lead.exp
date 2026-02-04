@@ -1,0 +1,39 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # start server "memreftest-leaf", "memreftest-main" and "memreftest-proxy".
+
+        exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e memreftest-leaf -a $env(FUCHSIA_IP)"
+    set ha_id [exec bash -c "$NBL_SDK_PATH/run/get_haid_by_str.sh /system/bin/memreftest-leaf"]
+    send -i $ree "nbl_daemon -l $ha_id\r"
+
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e memreftest-main -a $env(FUCHSIA_IP)"
+    set ha_id [exec bash -c "$NBL_SDK_PATH/run/get_haid_by_str.sh /system/bin/memreftest-main"]
+    send -i $ree "nbl_daemon -l $ha_id\r"
+
+    set ha_id bf31e276-945f-11e8-9caa-e742b9b7dfe0
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e memreftest-proxy -a $env(FUCHSIA_IP) -i $ha_id"
+    send -i $ree "nbl_daemon -l $ha_id\r"
+}
+
+set cmd "tipc-test -r 2 -m 52428800 -t mref_ut_leaf;echo mref_result=$?"
+send -i $ree "$cmd\r"
+set timeout 20
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+    # root@FVP:/ tipc-test -r 2 -m 52428800 -t mref_ut_leaf
+    # fill_memref: cmd: status=1
+    # memref_ut: done
+    # root@FVP:/ echo $?
+    # 1
+    -i $ree "mref_result=1" {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+    -i $ree "mref_result=0"
+}

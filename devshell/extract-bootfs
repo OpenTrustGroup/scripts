@@ -1,0 +1,90 @@
+#!/bin/bash
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+# options:
+# -o : output path
+# -t : with two toolchains for ree and hee.
+function help()
+{
+    echo "Usage: export bootfs files from manifest."
+    echo "  <-o dir>: directory output SDK."
+}
+
+# Set this to your desired output directory
+DEST_DIR=
+
+while getopts 'o:' OPT; do
+    case $OPT in
+        o)
+            DEST_DIR="$(realpath $OPTARG)";;
+        h)
+            help
+            exit 0;;
+        ?)
+            help
+            exit 1;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+# check options
+if [ -z "$DEST_DIR" ]; then
+    echo "Please set output dir by \"-o\"."
+    exit 1
+fi
+
+# Make sure destination exists
+mkdir -p "$DEST_DIR"
+
+# Paste your input into a file, e.g., input.txt
+INPUT_FILE="${FUCHSIA_OUT_DIR}/build-zircon/build-venus-hee/bootfs.manifest"
+
+while IFS='=' read -r name path; do
+    # Clean up leading/trailing spaces if any
+    name=$(echo "$name" | xargs)
+    path=$(echo "$path" | xargs)
+
+    if [[ -f "$path" ]]; then
+        # Remove prefixes
+        clean_name="${name#\{test\}}"
+        clean_name="${clean_name#\{core\}}"
+        clean_name="${clean_name#\{libs\}}"
+        clean_name="${clean_name#\{disktools\}}"
+        clean_name="${clean_name#\{misc\}}"
+
+        # Construct output path
+        out_path="$DEST_DIR/$clean_name"
+        mkdir -p "$(dirname "$out_path")"
+
+        cp "$path" "$out_path"
+    else
+        echo "WARNING: File not found: $path"
+    fi
+done < "$INPUT_FILE"
+
+cp ${FUCHSIA_OUT_DIR}/arm64/stripped/libc++.so.2 ${DEST_DIR}/lib
+cp ${FUCHSIA_OUT_DIR}/arm64/stripped/libc++abi.so.1 ${DEST_DIR}/lib
+cp ${FUCHSIA_OUT_DIR}/arm64/stripped/libunwind.so.1 ${DEST_DIR}/lib
+
+
+cat <<EOF > ${DEST_DIR}/BUILD.bazel
+filegroup(
+    name = "lib",
+    srcs = glob([
+        "lib/**",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "bin",
+    srcs = glob([
+        "bin/**",
+    ]),
+    visibility = ["//visibility:public"],
+)
+EOF

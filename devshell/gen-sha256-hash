@@ -1,0 +1,20 @@
+#!/bin/bash
+# Copyright 2019 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### Generate sha256 hash for given file
+
+## usage: fx gen-sha256-hash <input-file> <output-binary>
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+if [[ ! $# -eq 2 ]]; then
+  fx-command-help
+  exit 1
+fi
+
+sha256sum $1 | awk '{print "0: "$1}' | xxd -r -c 64 > $2

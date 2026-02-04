@@ -1,0 +1,43 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # There is no "k" command, so test nothing.
+    printf "In release, ignore this test !!!\n"
+} else {
+    set cmd "nblruncmd k ut all"
+    send -i $ree "$cmd\r"
+    set timeout 20
+    expect {
+        -i $ree timeout {
+            printf "TIMEOUT !!!\n"
+            exit 1
+        }
+        ## Print all test logs except "[00004.003] 01044.01047> SUMMARY:..."
+        #-i $console -re {^.*>\s((?!SUMMARY)[^\n]*)\n} {
+        #    printf "$expect_out(0,string)"
+        #    exp_continue
+        #}
+        # [00004.003] 01044.01047> SUMMARY: Ran 16 test cases: 1 failed
+        -i $ree -re {^.*>\s(SUMMARY:[^:]*:\s(?!0)[0-9]*\sfailed)} {
+            printf "$expect_out(1,string) FAILED !!!\n"
+            exit 1
+        }
+        # [00003.983] 01044.01047> SUMMARY: Ran 16 test cases: 0 failed
+        -i $ree -re {^.*>\s(SUMMARY:[^:]*:\s(?=0)[0-9]*\sfailed)} {
+            printf "$expect_out(1,string)\n"
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i $console "$ " {
+            exp_continue
+        }
+    }
+
+    set timeout 30
+    expect {
+        -i $ree timeout {
+            printf "TIMEOUT !!!\n"
+            exit 1
+        }
+
+        -i $ree "root@FVP:/ "
+    }
+}

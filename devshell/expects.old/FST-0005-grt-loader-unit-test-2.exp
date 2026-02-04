@@ -1,0 +1,67 @@
+#### install ta
+sleep 2
+
+printf "secmgr start push test data $env(FUCHSIA_IP)\n"
+
+set timeout 200
+#### device: secmgr_push_test_data.sh add "-d" param
+spawn $env(FUCHSIA_OUT_DIR)/arm64/sdks/nebula/run/otrp/unit_test_script/secmgr_push_test_data.sh -i $env(FUCHSIA_IP)
+
+set secmgr_push_spawn_id $spawn_id
+expect {
+    -i $secmgr_push_spawn_id timeout {
+        printf "secmgr start push test data TIMEOUT !!!\n"
+        exit 1
+    }
+    -i $secmgr_push_spawn_id timeout {
+        printf "secmgr_push test data TIMEOUT !!!\n"
+        exit 1
+    }
+    -i $secmgr_push_spawn_id "Are you sure you want to continue connecting (yes/no)? " {
+        send -i $secmgr_push_spawn_id "yes\r"
+        exp_continue
+    }
+}
+
+#### qemu
+printf "qemu secmgr nbl_daemon -p start\n"
+set cmd "nbl_daemon -p /root/ree/secmgr_unit_test/demo"
+send -i $ree "$cmd\r"
+printf "qemu secmgr nbl_daemon -p finish\n"
+
+
+set timeout 200
+expect {
+    -i $ree timeout {
+        printf "nbl_daemon -p TIMEOUT !!!\n"
+        exit 1
+    }
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+    -i $ree {*Provision folder*OK!}
+}
+
+####test secmgr loader
+set cmd "ta-loader_test -u 1"
+send -i $ree "$cmd\r"
+set timeout 300
+# [  FAILED  ] taloader-unittest: xxx: Some tests FAILED
+# success:
+# [  PASSED  ] taloader-unittest: xxx: All tests PASSED
+expect {
+    -i $ree timeout {
+        printf "ta-loader_test TIMEOUT !!!\n"
+        exit 1
+    }
+    -i $ree {taloader-unittest: *: Some tests FAILED} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+    -i $ree {taloader-unittest: *: All tests PASSED}
+}

@@ -1,0 +1,38 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # TODO : There is NO "runtests" in release.
+} else {
+    # run test case in /system/test/jemalloc.
+    set cmd "nblruncmd runtests /system/test/jemalloc"
+    send -i $ree "$cmd\r"
+    set timeout 360
+    expect {
+        -i $ree timeout {
+            printf "TIMEOUT !!!\n"
+            exit 1
+        }
+        # "SUMMARY: Ran XX tests: N failed", N != 0
+        -i $ree -re {SUMMARY:[^:]*:\s(?!0)[0-9]*\sfailed} {
+            printf "$expect_out(0,string) FAILED !!!\n"
+            exit 1
+        }
+        ## "SUMMARY: Ran XX tests: 0 failed"
+        -i $ree -re {SUMMARY:[^:]*:\s(?=0)[0-9]*\sfailed} {
+            printf "$expect_out(0,string)\n"
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i $console "$ " {
+            exp_continue
+        }
+    }
+
+    set timeout 30
+    expect {
+        -i $ree timeout {
+            printf "TIMEOUT !!!\n"
+            exit 1
+        }
+
+        -i $ree "root@FVP:/ "
+    }
+}

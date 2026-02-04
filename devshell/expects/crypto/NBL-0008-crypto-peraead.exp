@@ -1,0 +1,33 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # install exe into HEE
+    set ha_id "4266fdf9-8ba7-4e30-bcdb-b776dadcbae1"
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e crypto_test -a $env(FUCHSIA_IP) -i $ha_id"
+    # set the run command in HEE.
+    set cmd "nbl_daemon -l $ha_id -a \"--gtest_filter=All/PerAEADTest*\""
+} else {
+    set cmd "nblruncmd /system/test/crypto_test --gtest_filter=All/PerAEADTest*"
+}
+send -i $ree "$cmd\r"
+# [09:46:48] (11461) Running: HEE-0008-crypto-peraead.exp
+# [09:48:20] (11461) Finished: HEE-0008-crypto-peraead.exp (01m31s.472)
+# Increase timeout from 180 to 360 due to it needs more time for ASAN build.
+# [02:07:03] (16684) QEMU-3 Finished: NBL-0008-crypto-peraead.exp (07m13s.508)
+set timeout 600
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree {*\[  FAILED  \]*} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree {\[  PASSED  \]*}
+}

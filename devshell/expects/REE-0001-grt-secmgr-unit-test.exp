@@ -1,0 +1,98 @@
+#### install ta
+sleep 2
+set timeout 480
+#### Running on a real device requires the "--d" parameter
+spawn java -jar $NBL_SDK_PATH/run/otrp/debug_tool/secmgr_debug_tool.jar test_lite --ssh_ip $env(FUCHSIA_IP) --temp_folder $env(FUCHSIA_OUT_DIR)/testfile/$env(FUCHSIA_IP)
+
+set secmgr_debug_tool $spawn_id
+expect {
+    -i $secmgr_debug_tool timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+    -i $secmgr_debug_tool "*Secmgr offline get test failed*" {
+        printf "SECMGR TEST FAILED !!!\n"
+        exit 1
+    }
+    -i $secmgr_debug_tool "Are you sure you want to continue connecting (yes/no)? " {
+        send -i $secmgr_debug_tool "yes\r"
+        exp_continue
+    }
+    -i $secmgr_debug_tool "*Secmgr offline test all passed*" {
+        printf "SECMGR TEST SUCCESS !!!\n"
+    }
+    # DummyRead to avoid expect log full from the other world
+    -i $ree "$ " {
+        exp_continue
+    }
+    -i $console "$ " {
+        exp_continue
+    }
+}
+
+## memory leak test
+if { "$env(USE_RELEASE)" == "false" } {
+    sleep 1
+    set timeout 10
+    printf "SECMGR LEAK TEST START\n"
+    set cmd "nbl_daemon -m"
+    send -i $ree "$cmd\r"
+
+    expect {
+        -i $ree timeout {
+            printf "nbl_daemon -m TIMEOUT !!!\n"
+            exit 1
+        }
+        -i $ree "*Start secmgr memory leak test OK!" {
+            printf "nbl_daemon -m success !!!\n"
+        }
+    }
+
+    set timeout 480
+#### Running on a real device requires the "--d" parameter
+    spawn java -jar $NBL_SDK_PATH/run/otrp/debug_tool/secmgr_debug_tool.jar test --ssh_ip $env(FUCHSIA_IP) --temp_folder $env(FUCHSIA_OUT_DIR)/testfile/$env(FUCHSIA_IP)
+
+    set secmgr_debug_tool $spawn_id
+    expect {
+        -i $secmgr_debug_tool timeout {
+            printf "TIMEOUT !!!\n"
+            exit 1
+        }
+        -i $secmgr_debug_tool "*Secmgr offline get test failed*" {
+            printf "SECMGR LEAK TEST FAILED !!!\n"
+            exit 1
+        }
+        -i $secmgr_debug_tool "Are you sure you want to continue connecting (yes/no)? " {
+            send -i $secmgr_debug_tool "yes\r"
+            exp_continue
+        }
+        -i $secmgr_debug_tool "*Memory Faults:" {
+            printf "SECMGR LEAK !!!\n"
+            exit 1
+        }
+        -i $secmgr_debug_tool "*Secmgr offline test all passed*" {
+            printf "SECMGR LEAK TEST SUCCESS !!!\n"
+        }
+        # DummyRead to avoid expect log full from the other world
+        -i $ree "$ " {
+            exp_continue
+        }
+        -i $console "$ " {
+            exp_continue
+        }
+    }
+    set timeout 10
+    set cmd "nbl_daemon -s"
+    send -i $ree "$cmd\r"
+
+    expect {
+        -i $ree timeout {
+            printf "nbl_daemon -s TIMEOUT !!!\n"
+            exit 1
+        }
+        -i $ree "*Stop secmgr memory leak test OK!" {
+            printf "nbl_daemon -s success !!!\n"
+        }
+    }
+    printf "SECMGR LEAK TEST FINISH !!!\n"
+}

@@ -18,6 +18,10 @@
 
 set -eo pipefail; [[ "$TRACE" ]] && set -x
 
+# If use "SUDO_ASKPASS", then set password from other file.
+# - And then the flowing sudo will not ask password again.
+sudo -v -A 2>/dev/null || echo -n
+
 INTERFACE=$1
 LEASE_FILE=/tmp/fuchsia-dhcp-$INTERFACE.leases
 PID_FILE=/tmp/fuchsia-dhcp-$INTERFACE.pid
@@ -111,6 +115,12 @@ then
   sudo rm $LEASE_FILE
 fi
 
+if [[ -f "$LOG_FILE" ]]
+then
+  echo "Removing the old dnsmasq log file $LOG_FILE ..."
+  sudo rm $LOG_FILE
+fi
+
 # Bring up the network.
 echo "Bringing up the network interface: $INTERFACE"
 sudo ifconfig $INTERFACE inet $HOST_IP
@@ -164,9 +174,12 @@ else
     pass out on $DEFAULT_INTERFACE inet from $FUCHSIA_NETWORK to any
     " | sudo pfctl -q -ef - >& /dev/null || true
   else
-    sudo /bin/bash -c "echo 1 > /proc/sys/net/ipv4/ip_forward"
-    sudo iptables -t nat -A POSTROUTING -o $DEFAULT_INTERFACE -j MASQUERADE
-    sudo iptables -A FORWARD -i $DEFAULT_INTERFACE -o $INTERFACE -m state --state RELATED,ESTABLISHED -j ACCEPT
-    sudo iptables -A FORWARD -i $INTERFACE -o $DEFAULT_INTERFACE -j ACCEPT
+    ip_forward_enable=`cat /proc/sys/net/ipv4/ip_forward`
+    if [ $ip_forward_enable != 1 ];then
+      sudo /bin/bash -c "echo 1 > /proc/sys/net/ipv4/ip_forward"
+    fi
+    sudo iptables -w -t nat -A POSTROUTING -o $DEFAULT_INTERFACE -j MASQUERADE
+    sudo iptables -w -A FORWARD -i $DEFAULT_INTERFACE -o $INTERFACE -m state --state RELATED,ESTABLISHED -j ACCEPT
+    sudo iptables -w -A FORWARD -i $INTERFACE -o $DEFAULT_INTERFACE -j ACCEPT
   fi
 fi

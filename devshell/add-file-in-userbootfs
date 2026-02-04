@@ -1,0 +1,51 @@
+#!/bin/bash
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+## add external file into the user.bootfs.
+
+## usage: fx add-file-in-userbootfs manifest_file
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+if [ $# != 1 ]; then
+    echo "Pleaes input the manifest file path."
+    exit 1
+fi
+if [ ! -f "$1" ]; then
+    echo "The manifest file \"$1\" doesn't exist."
+    exit 1
+fi
+MANIFEST_PATH=`realpath $1`
+
+# Notice, the current directory should be here.
+cd ${FUCHSIA_OUT_DIR}/arm64
+
+# make the third-party.bin
+${FUCHSIA_OUT_DIR}/build-zircon/tools/mkbootfs -o third-party.bin --depfile third-party.bin.d $MANIFEST_PATH
+if [ $? != 0 ]; then
+    echo "Failed to make third-party.bin"
+    exit 2
+fi
+
+# remake the user.bootfs.
+
+# - Plan 1: remake by system_bootfs.bin and bootdata-qemu.bin, and the 3party.bin
+${FUCHSIA_OUT_DIR}/build-zircon/tools/mkbootfs -o user.bootfs --depfile user.bootfs.d \
+    system_bootfs.bin bootdata-qemu.bin third-party.bin
+
+# - Plan 2: remake by the original user.bootfs.
+#   keep the original user.bootfs as the base by which to make the new user.bootfs.
+#   [Defect] Cannot distingguish the whether or not the user.bootfs is added the third-party files.
+#if [ ! -f user.bootfs.original ]; then
+#    cp user.bootfs user.bootfs.original
+#fi
+#${FUCHSIA_OUT_DIR}/build-zircon/tools/mkbootfs -o user.bootfs --depfile user-3party.bootfs.d \
+#    user.bootfs.original third-party.bin
+
+if [ $? != 0 ]; then
+    echo "Failed to remake user.bootfs"
+    exit 3
+fi

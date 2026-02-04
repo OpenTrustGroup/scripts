@@ -1,0 +1,47 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### Export Linux
+### Use White List for prevending that wrong folder is exported.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly LINUX_PATH="${FUCHSIA_DIR}/linux"
+
+declare LINUX_OUT_DIR=""
+declare TEE_DRIVER_PATH="drivers/misc/mediatek/nebula"
+
+function usage()
+{
+  printf 'usage: fx export_linux -o <linux_out_path> [-d <tee_driver_rel_path>] [-h]\n' "$0"
+  printf '  -h        show help\n'
+  printf '  -o <path> linux output folder\n'
+  printf '  -d <path> tee driver path (related path to linux output folder)\n'
+  printf "            (default: ${TEE_DRIVER_PATH})\n"
+}
+
+while getopts "ho:d:" opt; do
+  case "${opt}" in
+    h) usage ; exit 0 ;;
+    o) LINUX_OUT_DIR=${OPTARG} ;;
+    d) TEE_DRIVER_PATH=${OPTARG} ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ -z "${LINUX_OUT_DIR}" ]]; then
+  echo "Please set output folder by option \"-o\"."
+  exit 1
+fi
+
+mkdir -p ${LINUX_OUT_DIR}/${TEE_DRIVER_PATH}
+mkdir -p ${LINUX_OUT_DIR}/include/linux/nebula
+
+cp -a ${LINUX_PATH}/drivers/nebula/* ${LINUX_OUT_DIR}/${TEE_DRIVER_PATH}/
+cp -a ${LINUX_PATH}/include/linux/nebula/* ${LINUX_OUT_DIR}/include/linux/nebula/

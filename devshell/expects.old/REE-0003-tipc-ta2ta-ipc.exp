@@ -1,0 +1,28 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # start server "ipctest-main" and "ipctest-srv".
+
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e ipctest-main -a $env(FUCHSIA_IP)"
+    set ha_id [exec bash -c "$NBL_SDK_PATH/run/get_haid_by_str.sh /system/bin/ipctest-main"]
+    send -i $ree "nbl_daemon -l $ha_id\r"
+
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e ipctest-srv -a $env(FUCHSIA_IP)"
+    set ha_id [exec bash -c "$NBL_SDK_PATH/run/get_haid_by_str.sh /system/bin/ipctest-srv"]
+    send -i $ree "nbl_daemon -l $ha_id\r"
+}
+
+set cmd "tipc-test -t ta2ta-ipc"
+send -i $ree "$cmd\r"
+set timeout 60
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "All tests PASSED"
+}

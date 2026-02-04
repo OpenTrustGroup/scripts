@@ -71,6 +71,7 @@
 ##                          for Visual Studio or "xcode" for Xcode.
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read-if-present
 
 function main {
   fx-standard-switches "$@"

@@ -1,0 +1,15 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+
+### Compile android apps (gradle).
+
+set -e
+
+basepath=$(cd `dirname $0`; pwd)
+
+echo -e "\nBuild android apps start\n"
+
+${FUCHSIA_DIR}/third_party/otrp/nbl_otrp_sdk/copy_lib
+${basepath}/build-android-app -p ${FUCHSIA_DIR}/third_party/otrp/nbl_otrp_sdk -c -d
+
+echo -e "\nBuild secmgr android apps finish\n"

@@ -1,0 +1,30 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # install exe into HEE
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e nbl_secmgr_test -a $env(FUCHSIA_IP)"
+    set ha_id [exec bash -c "$NBL_SDK_PATH/run/get_haid_by_str.sh /system/test/secmgr/nbl_secmgr_test"]
+    # set the run command in HEE.
+    set cmd "nbl_daemon -l $ha_id"
+} else {
+    set cmd "nblruncmd /system/test/secmgr/nbl_secmgr_test"
+}
+send -i $ree "$cmd\r"
+# almost equal to 70s.
+set timeout 100
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree {TEST FAILED} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree {All test PASS}
+}

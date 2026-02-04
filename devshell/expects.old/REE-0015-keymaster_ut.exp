@@ -1,0 +1,28 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # install exe into HEE
+    set ha_id 7936e12e-a930-11e7-abc4-cec278b6b50a
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e keymaster_ut -a $env(FUCHSIA_IP) -i $ha_id"
+    # set the run command in HEE.
+    set cmd "nbl_daemon -l $ha_id"
+    send -i $ree "$cmd\r"
+}
+
+sleep 6
+
+set cmd "tipc-test -t keymaster_ut"
+send -i $ree "$cmd\r"
+
+set timeout 60
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree {\[  PASSED  \]*}
+}

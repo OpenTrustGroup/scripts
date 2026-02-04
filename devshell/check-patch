@@ -1,0 +1,141 @@
+#!/bin/bash
+# Copyright 2019 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### check patches from gerrit or local git
+
+## usage: fx check-patch <query_string> [-d]
+## (options should put at the end of commands)
+##
+##   -d      show debug messages
+##
+##
+## examples: (patches from gerrit)
+## $ fx check-patch topic:keymaster -d
+## $ fx check-patch change:I948d46d6f7f1849c66e5e70fa825f4d0ba0e783c
+## $ fx check-patch change:1735
+##
+## examples: (patches from local git)
+## $ cd zircon; fx check-patch git:e25f02aabec2c70af5e35bad9b0f54c620eff478 -d
+## $ cd zircon; fx check-patch git:HEAD~1
+## $ cd zircon; fx check-patch patch:0001-typo-test.patch
+## $ fx check-patch file:zircon/trusty/app/hwcrypto/main.c
+## $ fx check-patch file:zircon/trusty/app/hwcrypto/
+##
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/gerrit.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly LINUX_PATH="${FUCHSIA_DIR}/linux-4.14"
+readonly CHECKPATCH_SCRIPT="${LINUX_PATH}/scripts/checkpatch.pl"
+
+declare CHECKPATCH_OPTS="--root=${LINUX_PATH} -q --color=never "
+declare CHECKPATCH_TYPES_UNIX="--types DOS_LINE_ENDINGS,SPACE_BEFORE_TAB,TRAILING_WHITESPACE,TYPO_SPELLING "
+declare CHECKPATCH_TYPES_DOS="--types SPACE_BEFORE_TAB,TRAILING_WHITESPACE,TYPO_SPELLING "
+
+declare DEBUG="false"
+declare LOCAL_MODE="true"
+declare FILES_OR_COMMITS=""
+
+function show_patch_info() {
+  if [[ "${DEBUG}" == "true" ]]; then
+    IFS=',' read -r -a proj_info <<< "${1}"
+    echo ""
+    echo "Gerrit Patch Info:"
+    for str in "${proj_info[@]}"; do
+      echo "    ${str}"
+    done
+    echo ""
+  fi
+}
+
+if [[ $# -eq 0 ]]; then
+  fx-command-help
+  exit 0
+fi
+
+query_string="${1}"
+shift
+
+while getopts "df" opt; do
+  case "${opt}" in
+    d) DEBUG="true";;
+    *) fx-command-help; exit 1;;
+  esac
+done
+
+git_commit_regex='git:(.+)'
+patch_file_regex='patch:(.+)'
+source_file_regex='file:(.+)'
+if [[ "${query_string}" =~ $git_commit_regex ]];then
+  CHECKPATCH_OPTS+=" --git"
+  FILES_OR_COMMITS="${BASH_REMATCH[1]}"
+elif [[ "${query_string}" =~ $patch_file_regex ]];then
+  CHECKPATCH_OPTS+=" --patch"
+  FILES_OR_COMMITS="${BASH_REMATCH[1]}"
+elif [[ "${query_string}" =~ $source_file_regex ]];then
+  CHECKPATCH_OPTS+=" --file"
+  filename="${BASH_REMATCH[1]}"
+  if [[ -d "${filename}" ]]; then
+    FILES_OR_COMMITS="$(find "${filename}" -type f | tr '\n' ' ')"
+  else
+    FILES_OR_COMMITS="${filename}"
+  fi
+else
+  LOCAL_MODE="false"
+fi
+
+if [[ "${LOCAL_MODE}" == "true" ]];then
+  CHECKPATCH_OPTS+=" ${CHECKPATCH_TYPES_UNIX}"
+  if [[ "${DEBUG}" == "true" ]]; then
+    echo "${CHECKPATCH_SCRIPT} ${CHECKPATCH_OPTS} ${FILES_OR_COMMITS}"
+  fi
+
+  ${CHECKPATCH_SCRIPT} ${CHECKPATCH_OPTS} ${FILES_OR_COMMITS}
+
+  if [[ "$?" == "0" ]]; then
+    echo PASSED
+    echo ""
+  fi
+  exit
+fi
+
+declare -a patch_infos
+declare -A branch_list
+
+tmp="$(gerrit_patch_query "${query_string}")"
+IFS='&' read -r -a patch_infos <<< "${tmp}"
+
+if [[ "${#patch_infos[@]}" == "0" ]]; then
+  echo "No patches found"
+  exit 0
+fi
+
+for p in "${patch_infos[@]}"; do
+  change_num="$(get_change_num "${p}")"
+  patchset_num="$(get_patchset_num "${p}")"
+  revision="$(get_revision "${p}")"
+  project="$(get_project "${p}")"
+  checkpatch_opt="${CHECKPATCH_OPTS}"
+
+
+  if [[ "${project}" == "third_party/host" ]]; then
+    checkpatch_opt+=" ${CHECKPATCH_TYPES_DOS}"
+  else
+    checkpatch_opt+=" ${CHECKPATCH_TYPES_UNIX}"
+  fi
+
+  show_patch_info ${p}
+  download_url="http://gerrit/changes/${change_num}/revisions/${revision}/patch?download"
+  echo "Patchset gerrit url: http://gerrit/#/c/${change_num}/${patchset_num}";
+  curl -s -S ${download_url} | base64 -d | \
+    ${CHECKPATCH_SCRIPT} ${checkpatch_opt}
+  if [[ "$?" == "0" ]]; then
+    echo PASSED
+    echo ""
+  fi
+done

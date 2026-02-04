@@ -1,0 +1,40 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # Cannot test : need "create process".
+
+    # install exe into HEE
+    #exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e zircon_benchmarks -a $env(FUCHSIA_IP)"
+    #set ha_id [exec bash -c "$NBL_SDK_PATH/run/get_haid_by_str.sh /system/bin/zircon_benchmarks"]
+    # set the run command in HEE.
+    #set cmd "nbl_daemon -l $ha_id"
+} else {
+    set cmd "nblruncmd /system/bin/zircon_benchmarks --benchmark_format=csv --benchmark_repetitions=1"
+
+    send -i $ree "$cmd\r"
+
+    # This is benchmark for zircon api. runtime is about 2min47sec. But when system is busy, the "TIME OUT" happens, so change to 300s.
+    # error message:
+    # ../../third_party/benchmark/src/benchmark.cc:407: ResumeTiming: Check `started_ && !finished_ && !error_occurred_' failed.
+    # ...
+    # [   52.630992] trusty: (0)[00055.516] 01259.01375> bt#14: end
+
+    set timeout 300
+    expect {
+        -i $ree timeout {
+            printf "TIMEOUT !!!\n"
+            exit 1
+        }
+
+        # find "end" to save the all call stackes.
+        -i $ree {*bt#*: end} {
+            printf "$cmd FAILED !!!\n"
+            exit 1
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i $console "$ " {
+            exp_continue
+        }
+
+        -i $ree "root@FVP:/ "
+    }
+}

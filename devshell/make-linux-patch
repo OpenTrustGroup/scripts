@@ -1,0 +1,59 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### generate Nebula Linux patch for third-party developers.
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+
+declare project_root=${FUCHSIA_DIR}
+declare linux_patch_root=""
+
+function usage {
+  cat << END
+
+usage: fx $(basename ${0}) <options>
+
+Options:
+  -o: Linux patch output folder
+
+  -h: Print this usage message.
+
+END
+}
+
+while getopts "p:o:" opt; do
+  case "${opt}" in
+    o) linux_patch_root="${OPTARG}" ;;
+    h) usage ; exit 0 ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+shift $(($OPTIND - 1))
+
+if [[ -z ${linux_patch_root} ]]; then
+    usage
+    echo Linux patch output folder is not set
+    exit 1
+fi
+
+if [[ -z $project_root ]]; then
+    echo project_root is not set
+    exit 1
+fi
+
+echo "==============================="
+echo "Generate the Nebula Linux patch"
+echo "==============================="
+
+mkdir -p ${linux_patch_root}/
+cd $project_root
+rsync -r -R linux/Documentation/devicetree/bindings/trusty/ ${linux_patch_root}/
+rsync -r -R linux/drivers/trusty/ ${linux_patch_root}/
+rsync -r -R linux/include/linux/trusty/ ${linux_patch_root}/
+rsync -R linux/Documentation/devicetree/bindings/vendor-prefixes.txt ${linux_patch_root}/
+rsync -R linux/include/uapi/linux/virtio_ids.h ${linux_patch_root}/
+cd -

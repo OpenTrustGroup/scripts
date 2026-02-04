@@ -1,0 +1,22 @@
+####test mem runout
+set cmd "ta-loader_test -t mr"
+send -i $ree "$cmd\r"
+set timeout 200
+# [  FAILED  ] taloader-unittest: xxx: Some tests FAILED
+# success:
+# [  PASSED  ] taloader-unittest: xxx: All tests PASSED
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+    -i $ree {taloader-unittest: *: Some tests FAILED} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+    -i $ree {taloader-unittest: *: All tests PASSED}
+}

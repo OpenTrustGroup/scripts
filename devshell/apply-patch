@@ -1,0 +1,127 @@
+#!/bin/bash
+# Copyright 2019 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### download and apply patches from gerrit
+
+## usage: fx apply-patch <gerrit_query_string> [-f] [-d]
+##
+##   -f      force delete existed branch
+##   -d      show debug messages
+##
+## examples:
+## $ fx apply-patch topic:keymaster
+## $ fx apply-patch change:I948d46d6f7f1849c66e5e70fa825f4d0ba0e783c
+## $ fx apply-patch change:1735
+##
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/gerrit.sh
+fx-config-read
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly JIRI_PROJECTS="$(jiri project |grep "* project" | awk '{print $3}')"
+
+declare FORCE="false"
+declare DEBUG="false"
+declare JIRI_OPTS=""
+
+function show_patch_info() {
+  if [[ "${DEBUG}" == "true" ]]; then
+    IFS=',' read -r -a proj_info <<< "${1}"
+    echo ""
+    echo "Gerrit Patch Info:"
+    for str in "${proj_info[@]}"; do
+      echo "    ${str}"
+    done
+    echo ""
+  fi
+}
+
+function is_jiri_project() {
+  for p in ${JIRI_PROJECTS}; do
+    if [[ "${p}" == "${1}" ]]; then
+      echo "true"
+      return
+    fi
+  done
+
+  echo "false"
+  return
+}
+
+gerrit_query_string="${1}"
+shift
+
+while getopts "df" opt; do
+  case "${opt}" in
+    f) FORCE="true";;
+    d) DEBUG="true";;
+    *) echo "invalid options"; exit 1;;
+  esac
+done
+
+if [[ "${FORCE}" == "true" ]]; then
+  JIRI_OPTS+=" -delete -force"
+fi
+
+declare -a patch_infos
+declare -A branch_list
+
+tmp="$(gerrit_patch_query "${gerrit_query_string}")"
+IFS='&' read -r -a patch_infos <<< "${tmp}"
+
+for p in "${patch_infos[@]}"; do
+  project="$(get_project "${p}")"
+  ref="$(get_ref "${p}")"
+  change_num="$(get_change_num "${p}")"
+  patchset_num="$(get_patchset_num "${p}")"
+  revision="$(get_revision "${p}")"
+
+  show_patch_info ${p}
+  if [[ "$(is_jiri_project ${project})" == "true" ]]; then
+    git_history="$(jiri runp -projects=${project}\$ git log --pretty=oneline --no-abbrev-commit --no-notes --max-count=80 | awk '{print $1}')"
+    if [[ "${git_history}" =~ "${revision}" ]]; then
+      echo "Project:${project} (${ref}) Patch already existed, ignore patching."
+      branch_list[${project}]+=" change/${change_num}/${patchset_num}"
+    else
+      echo "==> jiri patch ${JIRI_OPTS} -project="${project}" "${ref}""
+      jiri patch ${JIRI_OPTS} -project="${project}" "${ref}"
+      branch_list[${project}]+=" change/${change_num}/${patchset_num}"
+    fi
+    echo ""
+  else
+    echo "Project:${project} (${ref}) is not JIRI PROJECT, ignore patching."
+    echo ""
+  fi
+done
+
+topic_regex='topic:(.+)'
+tmp_branch_regex='change\/[0-9]+\/[0-9]+'
+if [[ "${gerrit_query_string}" =~ $topic_regex ]]; then
+  gerrit_topic=${BASH_REMATCH[1]}
+
+  for proj in "${!branch_list[@]}"; do
+    curr_local_br="$(jiri runp -projects=${proj}\$ git branch | grep \* | cut -d ' ' -f2)"
+
+    [[ "${DEBUG}" == "true" ]] && echo "branch_list[${proj}]: ${branch_list[${proj}]}"
+    [[ "${DEBUG}" == "true" ]] && echo "current local branch: ${curr_local_br}"
+
+    if [[ "${curr_local_br}" =~ $tmp_branch_regex ]]; then
+      echo "Creating or updating topic branch (topic-${gerrit_topic}) on project:${proj}."
+      jiri runp -projects=${proj}\$ "git branch -D topic-${gerrit_topic} || echo ignore delete branch"
+      jiri runp -projects=${proj}\$ git checkout -b topic-${gerrit_topic}
+    fi
+
+    # Delete tmp branches
+    local_brs="$(jiri runp -projects=${proj}\$ git branch)"
+    for br in ${branch_list[${proj}]}; do
+      if [[ "${local_brs}" =~ "${br}" ]]; then
+        jiri runp -projects=${proj}\$ git branch -D ${br}
+      fi
+    done
+  done
+fi
+

@@ -1,0 +1,20 @@
+
+sleep 2
+set timeout 150
+
+spawn $NBL_SDK_PATH/run/install-test-suite.sh -e storage-unittest -a $env(FUCHSIA_IP)
+
+set secmgr_test_id $spawn_id
+expect {
+    -i $secmgr_test_id timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+    -i $secmgr_test_id "*HA id match*" {
+        printf "SECMGR UUID TEST FAILED !!!\n"
+        exit 1
+    }
+    -i $secmgr_test_id "*HA id param is different from ha manifest id*" {
+        printf "SECMGR UUID TEST SUCCESS !!!\n"
+    }
+}

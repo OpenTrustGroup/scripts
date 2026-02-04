@@ -1,0 +1,108 @@
+# start server nbl_fwk_test" and "nbl_fwk_other_test".
+# - Here, C program will start this ha, so use real uuid.
+set timeout 100
+spawn $NBL_SDK_PATH/run/install-test-suite.sh -e nbl_fwk_test -i 6d3749a1-a000-47ff-a4d8-34342bf82f2f -a $env(FUCHSIA_IP)
+
+set secmgr_push_spawn_id $spawn_id
+expect {
+    -i $secmgr_push_spawn_id timeout {
+        printf "secmgr start push test data TIMEOUT1 !!!\n"
+        exit 1
+    }
+    -i $secmgr_push_spawn_id timeout {
+        printf "secmgr_push test data TIMEOUT1 !!!\n"
+        exit 1
+    }
+    -i $secmgr_push_spawn_id "Are you sure you want to continue connecting (yes/no)? " {
+        send -i $secmgr_push_spawn_id "yes\r"
+        exp_continue
+    }
+}
+set timeout 100
+
+spawn $NBL_SDK_PATH/run/install-test-suite.sh -e nbl_fwk_other_test -i 4a58c410-b84c-471b-9a7a-dd33154fc52b -a $env(FUCHSIA_IP)
+
+set secmgr_push_spawn_id $spawn_id
+expect {
+    -i $secmgr_push_spawn_id timeout {
+        printf "secmgr start push test data TIMEOUT2 !!!\n"
+        exit 1
+    }
+    -i $secmgr_push_spawn_id timeout {
+        printf "secmgr_push test data TIMEOUT2 !!!\n"
+        exit 1
+    }
+    -i $secmgr_push_spawn_id "Are you sure you want to continue connecting (yes/no)? " {
+        send -i $secmgr_push_spawn_id "yes\r"
+        exp_continue
+    }
+}
+
+send -i $ree "nbl_daemon -l 4a58c410-b84c-471b-9a7a-dd33154fc52b\r"
+send -i $ree "nbl_daemon -l 6d3749a1-a000-47ff-a4d8-34342bf82f2f\r"
+
+set cmd "libnbl_fwk_ree_test"
+send -i $ree "$cmd\r"
+set timeout 30
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree -re {Conditions failed:  [1-9][0-9]*} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "All tests PASSED"
+}
+
+set cmd "ta-license_test -n"
+send -i $ree "$cmd\r"
+set timeout 30
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree -re {Conditions failed:  [1-9][0-9]*} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "All tests PASSED"
+}
+
+set cmd "ta-license_test -d"
+send -i $ree "$cmd\r"
+set timeout 30
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree -re {Conditions failed:  [1-9][0-9]*} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree "All tests PASSED"
+}

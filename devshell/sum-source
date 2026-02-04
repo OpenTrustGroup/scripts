@@ -1,0 +1,57 @@
+#!/bin/bash
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Make a summary about source in NEBULA.
+# - cloc : https://github.com/AlDanial/cloc/blob/master/README.md
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+echo "Start to sumarize the source ..."
+
+# $1: mesasge to output
+# $2~: source folders.
+function sum_source()
+{
+    echo -e "\n$1" | tee -a $OUTPUT_FILE
+    shift
+    echo "Include: $*" | tee -a $OUTPUT_FILE
+    cloc ${CLOC_FLAGS} --report-file=${OUTPUT_FILE}.tmp $*
+    cat ${OUTPUT_FILE}.tmp | grep -v "Wrote" | grep -v "AlDanial" | tee -a ${OUTPUT_FILE}
+}
+
+# need tool "cloc".
+which cloc >/dev/null || sudo apt-get install cloc
+
+# Only summarize the source which staff of GRT changed.
+OUTPUT_FILE=$FUCHSIA_OUT_DIR/arm64/summary.source.txt
+
+# --by-file : show the source on each file.
+CLOC_FLAGS="--fullpath"
+
+cd $FUCHSIA_DIR
+echo "Summary at" `date -R` > $OUTPUT_FILE
+
+# zircon's kernel.
+sum_source "Source in kernel:" \
+    zircon/kernel
+
+# user's kernel.
+sum_source "Source in user space:" \
+    zircon/bootloader zircon/make  zircon/public zircon/scripts zircon/system zircon/third_party \
+    garnet/bin/appmgr garnet/bin/far garnet/bin/run garnet/bin/sysmgr garnet/public/lib/fsl garnet/public/lib/fxl \
+    build \
+    scripts
+
+# GRT's source.
+sum_source "Source added or made by GRT:" \
+    zircon/trusty \
+    third_party/ree-trusty third_party/hee-trusty third_party/iomp5 third_party/sqlite
+
+rm -rf $OUTPUT_FILE.tmp
+
+echo "The summary is OK. report is at \"${OUTPUT_FILE}\"."

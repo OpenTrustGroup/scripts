@@ -1,0 +1,30 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # install exe into HEE
+    set ha_id "c18e84b6-eefc-4989-9608-f5b8f9e8afe5"
+    exec bash -c "$NBL_SDK_PATH/run/install-test-suite.sh -e libc-tests -a $env(FUCHSIA_IP) -i $ha_id"
+    # set the run command in HEE.
+    set cmd "nbl_daemon -l $ha_id"
+} else {
+    set cmd "nblruncmd /system/test/libc-tests"
+}
+send -i $ree "$cmd\r"
+# [==========] 4 tests from 1 test case ran. (67165 ms total)
+set timeout 120
+expect {
+    -i $ree timeout {
+        printf "TIMEOUT !!!\n"
+        exit 1
+    }
+
+    -i $ree {*\[  FAILED  \]*} {
+        printf "$cmd FAILED !!!\n"
+        exit 1
+    }
+
+    # DummyRead to avoid expect log full from the other world
+    -i $console "$ " {
+        exp_continue
+    }
+
+    -i $ree {\[  PASSED  \]*}
+}

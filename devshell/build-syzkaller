@@ -1,0 +1,65 @@
+#!/bin/bash
+# Copyright 2019 GoldenRiver Inc.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### build syzkaller for nebula platform
+## Usage:
+##  fx build-syzkaller
+
+set -eo pipefail; [[ "${TRACE}" ]] && set -x
+
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+readonly ROOT_DIR="$(dirname "${SCRIPT_DIR}")"
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
+fx-config-read
+
+function usage {
+  fx-command-help
+  exit 1
+}
+
+export GOROOT="${FUCHSIA_DIR}/prebuilts/go1.11.1"
+export GOPATH="${FUCHSIA_OUT_DIR}/syzkaller"
+export SYZKALLER_GOROOT=${GOPATH}/src/github.com/google/syzkaller
+export PATH=${GOROOT}/bin:${PATH}
+readonly SYZKALLER_PATH="${FUCHSIA_DIR}/third_party/syzkaller"
+
+mkdir -p ${SYZKALLER_GOROOT}
+rm -rf ${SYZKALLER_GOROOT}/*
+rm -rf ${SYZKALLER_GOROOT}/.git
+
+# Build
+ln -sf ${SYZKALLER_PATH}/* ${SYZKALLER_GOROOT}
+ln -sf ${SYZKALLER_PATH}/.git ${SYZKALLER_GOROOT}
+
+usage() {
+  printf '\n%s: -t targetos \n' "`basename $0`"
+  printf '  -t [targetos] select targetos to build, only "linux" and "fuchsia" supported\n'
+  printf '\n'
+}
+
+while getopts "ht:" opt; do
+  case "${opt}" in
+    h) usage ; exit 0 ;;
+    t) TARGETOS="${OPTARG}" ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [[ ${TARGETOS} != "linux" && ${TARGETOS} != "fuchsia" ]]; then
+    usage
+    exit 1
+fi
+
+trap cleanup INT ERR EXIT
+cleanup() {
+  ERRNO=$?
+  # Remove .git in case jiri update complains stale project
+  rm -rf ${SYZKALLER_GOROOT}/.git
+  return $ERRNO
+}
+
+make TARGETARCH=arm64  TARGETOS=${TARGETOS} SOURCEDIR=${ROOT_DIR} -C ${SYZKALLER_GOROOT}
+ln -sf ${SYZKALLER_GOROOT}/bin/linux_arm64 ${SYZKALLER_GOROOT}/bin/linux-na_arm64

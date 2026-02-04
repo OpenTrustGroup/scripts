@@ -1,0 +1,252 @@
+#!/bin/bash
+# Copyright 2020 GoldenRiver Authors. All rights reserved.
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# make customized SDK for third-party developers.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+# timestamp echo...
+function ts_echo()
+{
+  echo [$(date +"%T")] "$@"
+}
+
+# options:
+# -o : output path
+# -t : with two toolchains for ree and hee.
+function help()
+{
+    echo "Usage: export all files on default."
+    echo "  <-o dir>: directory output SDK."
+    echo "  [-t]: export toolchains."
+    echo "  [-T]: don't export toolchains."
+    echo "  [-n]: export android-ndk."
+    echo "  [-N]: don't export android-ndk."
+    echo "  [-q]: export qemu and images."
+    echo "  [-Q]: don't export qemu and images."
+    echo "  [-r]: JUST EXPORT TOOL FOR OTrP, and no others (Cannot build TA/HA/CA)."
+    echo "  [-p]: set options: null"
+    echo "  [-h]: show help."
+}
+
+OUTPUT_DIR=
+WITH_TOOLCHAIN="true"
+WITH_NDK="true"
+WITH_QEMU="true"
+JUST_OTRP="false"
+EXPORT_OPTIONS=""
+V="${TRACE:-}" # Controls rsync verbosity
+
+[[ -n ${V} ]] && V="-v"
+
+while getopts 'o:tTnNqQhfp:r' OPT; do
+    case $OPT in
+        o)
+            OUTPUT_DIR="$(realpath $OPTARG)";;
+        t)
+            WITH_TOOLCHAIN="true";;
+        T)
+            WITH_TOOLCHAIN="false";;
+        n)
+            WITH_NDK="true";;
+        N)
+            WITH_NDK="false";;
+        q)
+            WITH_QEMU="true";;
+        Q)
+            WITH_QEMU="false";;
+        p)
+            EXPORT_OPTIONS="$EXPORT_OPTIONS ${OPTARG}";;
+        r)
+            JUST_OTRP="true";;
+        h)
+            help
+            exit 0;;
+        ?)
+            help
+            exit 1;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+# check options
+if [ -z "$OUTPUT_DIR" ]; then
+    echo "Please set output dir by \"-o\"."
+    exit 1
+fi
+
+################################################################
+##### TEE
+################################################################
+SDK_HOME=${FUCHSIA_OUT_DIR}/${ZIRCON_PROJECT}/arm64/sdks/nebula
+if [ ! -d $SDK_HOME ]; then
+    echo "Cannot find SDK in \"$SDK_HOME\""
+    exit 1
+fi
+
+ts_echo "Starting to export SDK."
+
+# copy the SDK and toolchain if need.
+mkdir -p $OUTPUT_DIR
+rsync ${V} -a --exclude "hee/*.cpp" --delete $SDK_HOME/* $OUTPUT_DIR
+if [ $? -ne 0 ]; then
+    echo "Failed to copy SDK."
+    exit 2
+fi
+
+################################################################
+##### JUST OTRP
+##### Just export OTrP script to SDK for sign/provision and so on.
+################################################################
+if [ "${JUST_OTRP}" == "true" ]; then
+    # Just keep SDK/run/otrp
+    # Note: there is NO document for these scripts.
+
+    for f in ${OUTPUT_DIR}/*; do
+        if [[ "$f" == "${OUTPUT_DIR}/make" || "$f" == "${OUTPUT_DIR}/run" ]]; then
+            continue
+        fi
+        rm -rf "$f"
+    done
+
+    for f in ${OUTPUT_DIR}/run/*; do
+        if [[ "$f" == "${OUTPUT_DIR}/run/otrp" ]]; then
+            continue
+        fi
+        rm -rf "$f"
+    done
+
+    exit 0
+fi
+
+################################################################
+##### REE: QEMU
+################################################################
+SDK_REE_OUT="${OUTPUT_DIR}/ree"
+REE_HDRS_DIR="${BAZEL_REE_OUT}/includes_qemu"
+REE_LIBS_DIR="${BAZEL_REE_OUT}/libs_qemu"
+REE_BINS_DIR="${BAZEL_REE_OUT}/bins_qemu"
+mkdir -p ${SDK_REE_OUT} # since rsync creates first level dir only
+rsync ${V} -a --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r $(ls -d ${REE_HDRS_DIR}/*/include/) "${SDK_REE_OUT}/include"
+rsync ${V} -a --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r $(ls -d ${REE_LIBS_DIR}/*/lib/) "${SDK_REE_OUT}/lib"
+rsync ${V} -a --delete --chmod=Du=rwx,Dgo=rx,Fu=rwx,Fgo=rx $(ls -d ${REE_BINS_DIR}/*) "${SDK_REE_OUT}/bin"
+
+################################################################
+##### REE: Android
+################################################################
+SDK_ANDROID_OUT="${OUTPUT_DIR}/android"
+NDK_HDRS_DIR="${BAZEL_REE_OUT}/includes_ndk"
+NDK_LIBS_DIR="${BAZEL_REE_OUT}/libs_ndk"
+REE_BINS_DIR="${BAZEL_REE_OUT}/bins_ndk"
+REE_AAR_DIR="${BAZEL_REE_OUT}/aar"
+REE_KEYSTORE_DIR="${BAZEL_REE_OUT}/keystore"
+rsync ${V} -a --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r $(ls -d ${NDK_HDRS_DIR}/*/) "${SDK_ANDROID_OUT}"
+rsync ${V} -a --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r $(ls -d ${NDK_LIBS_DIR}/*/libs/) "${SDK_ANDROID_OUT}/libs"
+rsync ${V} -a --delete --chmod=Du=rwx,Dgo=rx,Fu=rwx,Fgo=rx $(ls -d ${REE_BINS_DIR}/*/) "${SDK_ANDROID_OUT}/bin"
+rsync ${V} -a --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r $(ls -d ${REE_AAR_DIR}/) "${SDK_ANDROID_OUT}/aar"
+rsync ${V} -a --delete --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r $(ls -d ${REE_KEYSTORE_DIR}/) "${SDK_ANDROID_OUT}/keystore"
+
+################################################################
+##### RUN
+################################################################
+SDK_RUN_OUT="${OUTPUT_DIR}/run"
+OTRP_OUT="${SDK_RUN_OUT}/otrp"
+cp ${BAZEL_REE_OUT}/external/ree/ndk/nbl_daemon/libs/arm64-v8a/nbl_daemon ${OTRP_OUT}/
+
+################################################################
+##### HOST
+################################################################
+SDK_HOST_OUT="${OUTPUT_DIR}/host"
+NODEJS_DIR="${FUCHSIA_DIR}/prebuilts/nodejs-10.16.1"
+rsync ${V} -a --delete ${NODEJS_DIR}/javascript/ ${SDK_HOST_OUT}/javascript/
+rsync ${V} -a --delete ${NODEJS_DIR}/nodejs/ ${SDK_HOST_OUT}/nodejs/
+
+ts_echo "Success to export SDK."
+
+if [ $WITH_TOOLCHAIN = "true" ]; then
+    mkdir -p ${OUTPUT_DIR}/toolchains
+
+    # copy clang toolchain for hee.
+    rsync ${V} -aL --delete ${FUCHSIA_DIR}/buildtools/linux-x64/clang ${OUTPUT_DIR}/toolchains
+    if [ $? -ne 0 ]; then
+        ts_echo "Failed to copy clang toolchain."
+        exit 2
+    fi
+    ts_echo "Success to export clang."
+
+    # copy linaro-gcc for ree.
+    rsync ${V} -aL --delete ${LINARO_AARCH64_TOOLCHAIN_HOME}/ ${OUTPUT_DIR}/toolchains/linaro-gcc
+    if [ $? -ne 0 ]; then
+        ts_echo "Failed to copy linaro-gcc toolchain."
+        exit 2
+    fi
+    ts_echo "Success to export linaro-gcc."
+fi
+
+if [ $WITH_NDK = "true" ]; then
+    mkdir -p ${OUTPUT_DIR}/toolchains
+
+    # copy android-ndk.
+    rsync ${V} -aL --delete ${ANDROID_NDK_HOME}/ ${OUTPUT_DIR}/toolchains/android-ndk
+    if [ $? -ne 0 ]; then
+        ts_echo "Failed to copy android-ndk."
+        exit 2
+    fi
+
+    ts_echo "Success to export android-ndk."
+fi
+
+# If want qemu, then copy qemu executable file and images files.
+if [ "$WITH_QEMU" = "true" ]; then
+    QEMU_DIR=${OUTPUT_DIR}/run/qemu
+    QEMU_DATA=${QEMU_DIR}/data
+    QEMU_BIN=${QEMU_DIR}/qemu-x86_64-linux/bin
+
+    mkdir -p ${QEMU_BIN}
+    rsync ${V} -a --delete ${BAZEL_HOST_OUT}/qemu-x86_64-linux/ ${QEMU_DIR}/qemu-x86_64-linux
+
+    # for net of qemu.
+    cp -af ${FUCHSIA_DIR}/scripts/start-dhcp-server.sh ${QEMU_BIN}
+
+    SOC_TERM_PATH="${QEMU_DIR}/soc_term"
+    mkdir -p ${SOC_TERM_PATH}
+    cp -af ${BAZEL_HOST_OUT}/soc_term ${SOC_TERM_PATH}
+
+    mkdir -p ${QEMU_DATA}/build-atf/images
+    for f in `find -L ${FUCHSIA_OUT_DIR}/build-atf/images/* -type f -name "*.bin"`; do
+        rsync ${V} -aL --delete $f ${QEMU_DATA}/build-atf/images/
+    done
+
+    # bl32.bin and bl33.bin will be created as a soft link in run-qemu.sh
+    rm -f ${QEMU_DATA}/build-atf/images/bl32.bin
+    rm -f ${QEMU_DATA}/build-atf/images/bl33.bin
+
+    cp -af ${FUCHSIA_OUT_DIR}/venus-hee/arm64/bootdata-combo-qemu-virt.bin $QEMU_DATA/bootdata-combo-qemu.bin
+    cp -af ${FUCHSIA_OUT_DIR}/venus-hee/arm64/bootdata-combo-qemu-virt-rel.bin $QEMU_DATA/bootdata-combo-qemu-rel.bin
+    cp -af ${FUCHSIA_OUT_DIR}/build-zircon/build-venus-hee/zircon.bin $QEMU_DATA/zircon.bin
+    cp -af ${FUCHSIA_OUT_DIR}/build-zircon/build-venus-hee/qemu-boot-shim.bin $QEMU_DATA/boot-shim.bin
+    cp -af ${FUCHSIA_OUT_DIR}/venus-hee/arm64/bootdata-fs-qemu-virt.bin $QEMU_DATA/bootdata-fs.bin
+    cp -af ${FUCHSIA_OUT_DIR}/venus-hee/arm64/bootdata-plid-qemu-virt.bin $QEMU_DATA/bootdata-plid.bin
+
+    cp -af ${FUCHSIA_OUT_DIR}/venus-tee/arm64/bootdata-combo-qemu-virt.bin $QEMU_DATA/bootdata-combo-qemu-tee.bin
+    cp -af ${FUCHSIA_OUT_DIR}/venus-tee/arm64/bootdata-combo-qemu-virt-rel.bin $QEMU_DATA/bootdata-combo-qemu-tee-rel.bin
+
+    ts_echo "Success to export qemu and images."
+fi
+
+# create document
+fx-command-run make-docs -o ${OUTPUT_DIR}/docs >/dev/null
+
+ts_echo "Success to export document."
+
+fx-command-run extract-bootfs -o ${OUTPUT_DIR}/hee/bootfs_prebuilts
+
+#################################################
+### At End
+#################################################

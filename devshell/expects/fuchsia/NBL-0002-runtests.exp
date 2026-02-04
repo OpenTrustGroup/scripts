@@ -1,0 +1,43 @@
+if { "$env(USE_RELEASE)" == "true" } {
+    # TODO : There is NO "runtests" in release.
+} else {
+    set cmd "nblruncmd runtests"
+    send -i $ree "$cmd\r"
+    # "runtests core, sys, ddk, libc, fs" took about 5m15s, 5m24s
+    set timeout 720
+    expect {
+        -i $ree timeout {
+            printf "TIMEOUT !!!\n"
+            exit 1
+        }
+        ## Print all test logs except "SUMMARY:..."
+        #-i $console -re {^((?!SUMMARY)[^\n]*)\n} {
+        #    printf "$expect_out(0,string)"
+        #    exp_continue
+        #}
+        # "SUMMARY: Ran XX tests: N failed", N != 0
+        -i $ree -re {\d+ (SUMMARY:[^:]*:\s(?!0)[0-9]*\sfailed)} {
+            printf "$expect_out(1,string) FAILED !!!\n"
+            exit 1
+        }
+        ## "SUMMARY: Ran XX tests: 0 failed"
+        -i $ree -re {\d+ (SUMMARY:[^:]*:\s(?=0)[0-9]*\sfailed)} {
+            printf "$expect_out(1,string)\n"
+        }
+
+        # DummyRead to avoid expect log full from the other world
+        -i $console "$ " {
+            exp_continue
+        }
+    }
+
+    set timeout 30
+    expect {
+        -i $ree timeout {
+            printf "TIMEOUT !!!\n"
+            exit 1
+        }
+
+        -i $ree "root@FVP:/ "
+    }
+}
