@@ -1,0 +1,252 @@
+#!/bin/bash
+# Copyright 2025 GoldenRiver Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# make customized SDK for third-party developers.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+# options:
+# -o : output path
+# -t : with two toolchains for ree and hee.
+function help()
+{
+    echo "Usage: export mini environent for garnet development"
+    echo "  <-o dir>: directory to output devkit."
+    echo "  [-h]: show help."
+}
+
+OUTPUT_DIR=
+HEADERS_ONLY=0
+V="${TRACE:-}" # Controls rsync verbosity
+
+[[ -n ${V} ]] && V="-v"
+
+while getopts 'o:t' OPT; do
+    case $OPT in
+        o)
+            OUTPUT_DIR="$(realpath $OPTARG)";;
+        t)
+            HEADERS_ONLY=1;;
+        h)
+            help
+            exit 0;;
+        ?)
+            help
+            exit 1;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+# check options
+if [ -z "$OUTPUT_DIR" ]; then
+    echo "Please set output dir by \"-o\"."
+    exit 1
+fi
+
+rename_files() {
+    local dir="${1:-.}"   # default to current directory if not specified
+
+    find "$dir" -type f -name "*.devkit" | while read -r file; do
+        local newname="${file%.devkit}"
+        mv "$file" "$newname"
+        echo "Renamed: $file -> $newname"
+    done
+}
+
+copy_files() {
+    local target="$1"
+    shift
+    local -n items="$1"  # nameref to array passed in
+    shift
+
+    # ensure target exists
+    mkdir -p "$target"
+
+    for src in "${items[@]}"; do
+        if [ -d "$src" ]; then
+            rsync -aR --exclude=".git" "$src" "$target/"
+            echo "Copied directory $src -> $target/"
+        elif [ -f "$src" ]; then
+            rsync -aR "$src" "$target/"
+            echo "Copied file $src -> $target/"
+        else
+            echo "Warning: $src does not exist, skipping."
+        fi
+    done
+}
+
+
+init_git_repo() {
+    local target="$1"
+
+    if [ ! -d "$target" ]; then
+        echo "Error: Target folder '$target' does not exist."
+        return 1
+    fi
+
+    cd "$target" || return 1
+
+    if [ -d ".git" ]; then
+        rm -fr .git
+    fi
+    git init
+
+    # Add all files
+    git add .
+
+    # Commit
+    git commit -m "Initial commit"
+}
+
+to_relative_path() {
+    local outdir="$1/out"
+    local builddir="$2"
+
+    if [ ! -d "$outdir" ]; then
+        echo "Error: Output folder '$outdir' does not exist."
+        return 1
+    fi
+
+    for f in $(find $outdir -type f -name "bootfs.manifest"); do
+        sed -i -r -e "s#${builddir}/out/[a-zA-Z0-9\-]+#\.#" $f
+    done
+}
+
+src_dirs=(
+  "build"
+  "buildtools"
+  "scripts"
+  "garnet/bin/appmgr"
+  "garnet/bin/sysmgr"
+  "garnet/bin/guest"
+  "garnet/bin/guest_manager"
+  "garnet/bin/far"
+  "garnet/drivers/block"
+  "garnet/drivers/board"
+  "garnet/drivers/bus"
+  "garnet/drivers/soc"
+  "garnet/drivers/watchdog"
+  "garnet/drivers/ramfb"
+  "garnet/drivers/spi"
+  "garnet/drivers/gpio"
+  "garnet/drivers/monitor"
+  "garnet/drivers/i2c"
+  "garnet/drivers/misc"
+  "garnet/go/src/fidl"
+  "garnet/lib/machina"
+  "garnet/lib/far"
+  "garnet/lib/spi_transport"
+  "garnet/packages"
+  "garnet/public/BUILD.gn"
+  "garnet/public/lib/app"
+  "garnet/public/lib/lua"
+  "garnet/public/lib/fidl"
+  "garnet/public/lib/fsl"
+  "garnet/public/lib/fxl"
+  "garnet/public/lib/mem"
+  "garnet/public/lib/svc"
+  "garnet/public/lib/syslog"
+  "garnet/public/lib/spi_transport"
+  "garnet/public/lib/virtualization"
+  "garnet/public/lib/guest_allocator"
+  "garnet/public/lib/lua"
+  "vendor/grt"
+  "zircon/prebuilt"
+  "zircon/public"
+  "zircon/system/ulib"
+  "zircon/system/public"
+  "zircon/system/host"
+  "zircon/third_party/ulib"
+  "zircon/trusty"
+  "third_party/boringssl"
+  "third_party/fdt"
+  "third_party/go"
+  "third_party/golang"
+  "third_party/golibs"
+  "third_party/googletest"
+  "third_party/hee-trusty/nbl_fwk"
+  "third_party/hee-trusty/nbl_license_srv"
+  "third_party/hee-trusty/nbl_loader_srv"
+  "third_party/hee-trusty/nbl_nsc"
+  "third_party/hee-trusty/tools"
+  "third_party/nbl_license_tool"
+  "third_party/ree-trusty/libnbl_vhm"
+  "third_party/ree-trusty/libnebula-cpp"
+  "third_party/protobuf"
+  "third_party/rapidjson"
+  "third_party/littlefs"
+  "out/build-zircon"
+  "out/build-zircon-release"
+  ".jiri_root/bin"
+  ".prebuilts_config"
+)
+
+hdr_dirs=(
+    "zircon/public/sysroot"
+    "zircon/system/public/zircon"
+    "zircon/system/ulib"
+    "zircon/trusty/lib/include/user"
+    "zircon/third_party/ulib/cksum/include"
+    "out/build-zircon/build-venus-hee/gen/global/include/zircon/"
+    "out/build-zircon/build-venus-hee/system/ulib/zircon"
+    "out/build-zircon-release/build-venus-hee/gen/global/include/zircon/"
+    "out/build-zircon-release/build-venus-hee/system/ulib/zircon"
+)
+
+if [ $HEADERS_ONLY -eq 1 ]; then
+    copy_files $OUTPUT_DIR hdr_dirs
+    exit
+fi
+
+mkdir -p $OUTPUT_DIR
+copy_files $OUTPUT_DIR src_dirs
+rename_files ${OUTPUT_DIR}/garnet
+rename_files ${OUTPUT_DIR}/build
+init_git_repo ${OUTPUT_DIR}/garnet
+to_relative_path ${OUTPUT_DIR} ${FUCHSIA_DIR}
+
+BUILD_SCRIPT="${OUTPUT_DIR}/build.sh"
+
+cat > "$BUILD_SCRIPT" << 'EOF'
+#!/bin/bash
+source scripts/env.sh
+
+function help()
+{
+    echo "Usage: export build artifact to yocto prebuilt"
+    echo "  [-o dir]: yocto prebuilt directory"
+    echo "  [-h]: show help."
+}
+
+OUTPUT_DIR=
+while getopts 'o:' OPT; do
+    case $OPT in
+        o)
+            OUTPUT_DIR="$(realpath $OPTARG)";;
+        h)
+            help
+            exit 0;;
+        ?)
+            help
+            exit 1;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+fx set-venus venus-hee
+fx build
+
+if [ ! -z "$OUTPUT_DIR" ]; then
+    fx export-yocto-prebuilt -o ${OUTPUT_DIR}
+fi
+EOF
+chmod +x $BUILD_SCRIPT
+
+pushd $OUTPUT_DIR
+ln -sf build/gn/dotfile.gn .gn
+popd

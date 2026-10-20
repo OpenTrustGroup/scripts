@@ -1,0 +1,111 @@
+#!/bin/bash
+# Copyright 2025 GoldenRiver Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# make customized SDK for third-party developers.
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/image_build_vars.sh
+source "${FUCHSIA_DIR}/buildtools/vars.sh"
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+# options:
+# -o : output path
+# -t : with two toolchains for ree and hee.
+function help()
+{
+    echo "Usage: export build artifact to yocto prebuilt folder"
+    echo "  <-o dir>: yocto prebuilt folder path"
+    echo "  [-h]: show help."
+}
+
+OUTPUT_DIR=
+V="${TRACE:-}" # Controls rsync verbosity
+
+[[ -n ${V} ]] && V="-v"
+
+while getopts 'o:' OPT; do
+    case $OPT in
+        o)
+            OUTPUT_DIR="$(realpath $OPTARG)";;
+        h)
+            help
+            exit 0;;
+        ?)
+            help
+            exit 1;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+# check options
+if [ -z "$OUTPUT_DIR" ]; then
+    echo "Please set output dir by \"-o\"."
+    exit 1
+fi
+
+
+blacklist=(
+  "build-zircon"
+  "libsdtc++"
+  "libc++"
+  "libcrypto"
+  "libssl"
+  "libfxl"
+  "libfsl"
+  "libunwind"
+)
+
+filter_string() {
+    local file="$1"
+    shift
+    local blacklist=("$@")
+
+    if [[ -z "$file" || ${#blacklist[@]} -eq 0 ]]; then
+        return 1
+    fi
+
+    if [[ ! -f "$file" ]]; then
+        echo "Error: File '$file' not found!"
+        return 1
+    fi
+
+    # Build grep pattern for blacklist
+    local pattern=$(printf "|%s" "${blacklist[@]}")
+    pattern="${pattern:1}"   # remove leading '|'
+
+    # Exclude lines containing any of the blacklist strings
+    grep -Ev "$pattern" "$file"
+}
+
+copy_prebuilt_files() {
+    local mapping_file="$1"
+    local target_dir="$2"
+
+    if [[ -z "$mapping_file" || -z "$target_dir" ]]; then
+        return 1
+    fi
+
+    if [[ ! -f "$mapping_file" ]]; then
+        echo "Error: Mapping file '$mapping_file' not found!"
+        return 1
+    fi
+
+    while IFS="=" read -r _ src; do
+        if [[ -n "$src" && -f "$src" ]]; then
+            local dest="$target_dir/$src"
+            mkdir -p "$(dirname "$dest")"
+            cp "$src" "$dest"
+            echo "Copied $src -> $dest"
+        fi
+    done < "$mapping_file"
+}
+
+mkdir -p ${OUTPUT_DIR}
+filter_string ${FUCHSIA_DIR}/out/arm64/system.manifest ${blacklist[@]} > "${OUTPUT_DIR}"/system.manifest
+
+pushd ${FUCHSIA_DIR}/out/arm64
+copy_prebuilt_files ${OUTPUT_DIR}/system.manifest ${OUTPUT_DIR}
+popd
+
