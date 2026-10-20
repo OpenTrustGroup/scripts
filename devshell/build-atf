@@ -19,16 +19,26 @@ readonly ROOTFS_BUILDROOT="${FUCHSIA_OUT_DIR}/build-linux-rootfs"
 declare BL32_BIN=""
 declare BL32_EXTRA1_BIN=""
 declare BL32_EXTRA2_BIN=""
-
+declare SPD=""
+declare FFA_ENABLE="0"
 BL32_BIN="${ZIRCON_BUILD_DIR}/qemu-zircon.bin"
 declare QEMU_USE_GIC_DRIVER="QEMU_GICV3"
 
 if [[ "${TEE_SPD}" == "nebula" ]]; then
-  declare SPD="nebula"
+  SPD="nebula"
 elif [[ "${TEE_SPD}" == "optee" ]]; then
-  declare SPD="opteed"
+  SPD="opteed"
+  FFA_ENABLE="1"
 else
-  declare SPD="none"
+  SPD="none"
+fi
+
+if [[ "${FFA_ENABLE}" = "1" ]]; then
+  SPD="spmd"
+  declare SPMC_AT_EL3=1
+  declare SPMD_SPM_AT_SEL2=0
+  declare QEMU_TOS_FW_CONFIG_DTS="../prebuilts/optee/spmc_el3_manifest.dts"
+  declare ENABLE_SVE_FOR_SWD=1
 fi
 
 if [[ "${TEE}" = "gzos" ]]; then
@@ -133,7 +143,10 @@ echo "Building arm-trusted-firmware..."
 rm -rf ${ATF_BUILDROOT}
 ATF_FLAGS="${ATF_FLAGS} BL32=${BL32_BIN} BL33=${BL33_BIN}"
 ATF_FLAGS="${ATF_FLAGS} BL32_EXTRA1=${BL32_EXTRA1_BIN} BL32_EXTRA2=${BL32_EXTRA2_BIN}"
-ATF_FLAGS="${ATF_FLAGS} PLAT=${PLATFORM} SPD=${SPD}"
+if [[ "${FFA_ENABLE}" = "1" ]]; then
+ATF_FLAGS="${ATF_FLAGS} SPMC_AT_EL3=${SPMC_AT_EL3} SPMD_SPM_AT_SEL2=${SPMD_SPM_AT_SEL2} QEMU_TOS_FW_CONFIG_DTS=${QEMU_TOS_FW_CONFIG_DTS} ENABLE_SVE_FOR_SWD=${ENABLE_SVE_FOR_SWD}"
+fi
+ATF_FLAGS="${ATF_FLAGS} PLAT=${PLATFORM} SPD=${SPD} "
 ATF_FLAGS="${ATF_FLAGS} ARM_ARCH_MAJOR=${ARM_ARCH_MAJOR} ARM_ARCH_MINOR=${ARM_ARCH_MINOR}"
 ATF_FLAGS="${ATF_FLAGS} ARM_TSP_RAM_LOCATION=tdram DEBUG=${DEBUG_BUILD} LOG_LEVEL=${LOG_LEVEL} BL32_RAM_LOCATION=tdram"
 ATF_FLAGS="${ATF_FLAGS} BUILD_BASE=${ATF_BUILDROOT} V=${VERBOSE}"
@@ -156,6 +169,9 @@ ln -sf ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT} ${ATF_BUILDROOT}/images
 ln -sf ${LINUX_BUILDROOT}/arch/arm64/boot/Image ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl33_extra1.bin
 if [[ "${TEE_SPD}" == "optee" ]]; then
   ln -sf ${FUCHSIA_DIR}/prebuilts/optee/rootfs.cpio.gz ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl33_extra2.bin
+  if [[ "${FFA_ENABLE}" = "1" ]]; then
+    ln -sf ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/fdts/spmc_el3_manifest.dtb ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/tos_fw_config.dtb
+  fi
 else
   ln -sf ${ROOTFS_BUILDROOT}/filesystem.cpio.gz ${ATF_BUILDROOT}/${PLATFORM}/${VARIANT}/bl33_extra2.bin
 fi
