@@ -96,7 +96,7 @@ make_zircon_common() {
   # NBL_IS_RELEASE=true will disable some module in rules.mk and source code.
   # ENABLE_ASSERT=true will force to enable DEBUG_ASSERT() and assert()
   if [ "${RELEASE}" = "true" ]; then
-    RLS_OPT="export NBL_IS_RELEASE=1 DEBUG=0 "
+    RLS_OPT="export NBL_IS_RELEASE=1 DEBUG=0 ENABLE_BUILD_SYMBOL_TABLE=0"
     if [ "${ENABLE_ASSERT}" = "true" ]; then
       RLS_OPT="${RLS_OPT} ENABLE_ASSERT=1 "
     else
