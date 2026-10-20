@@ -64,15 +64,18 @@ declare QEMU_VIRTIO_V9FS_FLAGS=""
 declare QEMU_VIRTIO_PCI_FLAGS=""
 declare QEMU_DISK_FLAGS=""
 declare QEMU_SCSI_IMAGE=""
+declare QEMU_LITTLEFS_IMAGE=""
 declare QEMU_HEE_PORT="54320"
 declare QEMU_TEE_PORT="54321"
 declare QEMU_REE_PORT="54322"
 declare QEMU_SERIAL_FLAGS="-serial tcp:localhost:54320 -serial tcp:localhost:54321 -serial tcp:localhost:54322"
+declare QEMU_VIRTIO_I2C_FLAGS="-device i2c-echo,address=0x39"
 declare QEMU_EXTRA_ARGS="-semihosting-config enable=on,target=native -d unimp -machine acpi=off -vga none -serial mon:stdio "
 declare QEMU_HEE_RAM="1024"
-declare QEMU_REE1_RAM="1536" # Linux Kernel
-declare QEMU_REE2_RAM="128"   # Linux Rootfs
-declare QEMU_ION_RAM="129"    # Reserved memory for ION heap
+declare QEMU_GUEST_RAM="2048" # Linux Kernel
+declare QEMU_REE1_RAM="64" # Linux Kernel
+declare QEMU_REE2_RAM="64" # Linux Rootfs
+declare QEMU_ION_RAM="129" # Reserved memory for ION heap
 declare QEMU_TEE_RAM="448"
 declare QEMU_CPU_NUM="4"
 declare QEMU_GIC_VERSION="3"
@@ -93,6 +96,9 @@ declare QEMU_VMID="1"
 declare CPU_MODEL="cortex-a53"
 declare BOOT_ANDROID="false"
 
+readonly EARLYCON_REAL_UART="earlycon=pl011,0x09001000 console=ttyAMA0 "
+readonly EARLYCON_VIRT_UART="earlycon=pl011,0xffff32000 console=vmlog-sink0 "
+
 #QEMU_EXTRA_ARGS="${QEMU_EXTRA_ARGS} -d guest_errors" # Show error messages when accessing registers
 
 CMDLINE=""
@@ -108,7 +114,6 @@ CMDLINE+="virtcon.disable=true  "
 #CMDLINE+="netsvc.disable=true  "
 CMDLINE+="ktrace.bufsize=32  "
 CMDLINE+="kernel.oom.enable=false  "
-CMDLINE+="earlycon=pl011,0x09001000 console=ttyAMA0  "
 CMDLINE+="fbcon=map:2 " # Disable Linux Framebuffer
 
 usage() {
@@ -138,6 +143,7 @@ usage() {
   printf '  -p            configure REE RAM in MBs. (default: '${QEMU_REE1_RAM}' MiB)\n'
   printf '  -q            configure TEE RAM in MBs. (default: '${QEMU_TEE_RAM}' MiB)\n'
   printf '  -r            run QEMU with bootdata-combo-qemu-virt-rel.bin\n'
+  printf '  -s            configure CPU number. (default: '${QEMU_CPU_NUM}')\n'
   printf '  -t            dump QEMU device tree (dtb, dts) to %s\n' ${FUCHSIA_DIR}
   printf '  -T            run QEMU with trusty schedule policy\n'
   printf '  -x            output QEMU serial logs to TMUX instead of gnome-terminal/xterm\n'
@@ -148,7 +154,7 @@ usage() {
   printf '  -u            booting Android system (if A-HYP mode, SOS will be Android)\n'
 }
 
-while getopts "ac:C:deg:i:j:m:no:p:q:rs:tT9xyzu" opt; do
+while getopts "ac:C:deg:i:j:l:m:no:p:q:rs:tT9xyzu" opt; do
   case "${opt}" in
     a)
       CMDLINE+="aslr.disable=true "
@@ -173,6 +179,9 @@ while getopts "ac:C:deg:i:j:m:no:p:q:rs:tT9xyzu" opt; do
       ;;
     i)
       QEMU_SCSI_IMAGE="${OPTARG}"
+      ;;
+    l)
+      QEMU_LITTLEFS_IMAGE="${OPTARG}"
       ;;
     j)
       [[ "OPTARG" -gt "${EXPECT_JOBS}" ]] && EXPECT_JOBS="${OPTARG}"
@@ -272,18 +281,22 @@ relink_atf_images() {
 local regex='venus-[ht]ee'
 
 if [[ "${ZIRCON_PROJECT}" =~ ${regex} ]]; then
-  if [[ ! -e "${QEMU_TEE_KERNEL_PATH}" ]]; then
-    echo "TEE image not found: ${QEMU_TEE_KERNEL_PATH}"
-    exit 1
-  fi
   if [[ ! -e "${QEMU_ZIRCON_KERNEL_PATH}" ]]; then
     echo "HEE image not found: ${QEMU_ZIRCON_KERNEL_PATH}"
     exit 1
   fi
 
   if [[ "${TEE_SPD}" == "optee" ]]; then
+    if [[ ! -e "${QEMU_OPTEE_KERNEL_PATH}" ]]; then
+      echo "TEE image not found: ${QEMU_OPTEE_KERNEL_PATH}"
+      exit 1
+    fi
     ln -sf ${QEMU_OPTEE_KERNEL_PATH} bl32.bin
-  else
+  elif [[ "${TEE_SPD}" == "nebula" ]]; then
+    if [[ ! -e "${QEMU_TEE_KERNEL_PATH}" ]]; then
+      echo "TEE image not found: ${QEMU_TEE_KERNEL_PATH}"
+      exit 1
+    fi
     ln -sf ${QEMU_TEE_KERNEL_PATH} bl32.bin
   fi
 
@@ -321,7 +334,7 @@ launch_qemu() {
       FUCHSIA_IP="192.168.${IFNO}.53" # expect will export this var while running
       MAC=",mac=52:54:00:00:00:$(printf "%02x" ${IFNO})"
       QEMU_VIRTIO_NET_FLAGS=" -netdev type=tap,ifname=${IFNAME},script=${FUCHSIA_DIR}/scripts/start-dhcp-server.sh,downscript=no,id=net0"
-      QEMU_VIRTIO_NET_FLAGS+=" -device virtio-net-pci,netdev=net0${MAC},vmid=${QEMU_VMID}"
+      QEMU_VIRTIO_NET_FLAGS+=" -device virtio-net-pci,netdev=net0${MAC},vmid=${QEMU_VMID},vectors=0"
 
       # If use "SUDO_ASKPASS", then set password from other file.
       sudo -v -A 2>/dev/null || echo -n
@@ -338,6 +351,9 @@ launch_qemu() {
     if [[ "${QEMU_SCSI_IMAGE}" != "" ]]; then
       QEMU_DISK_FLAGS+="-drive file=${QEMU_SCSI_IMAGE},index=0,if=none,id=hdd,format=raw "
       QEMU_DISK_FLAGS+="-device virtio-blk-device,drive=hdd "
+    fi
+    if [[ "${QEMU_LITTLEFS_IMAGE}" != "" ]]; then
+      QEMU_DISK_FLAGS+="-drive file=${QEMU_LITTLEFS_IMAGE},if=none,id=mydisk -device ich9-ahci,id=ahci -device ide-hd,drive=mydisk,bus=ahci.0 "
     fi
 
     if [[ "${BOOT_ANDROID}" == "true" ]]; then
@@ -365,6 +381,7 @@ launch_qemu() {
       -cpu ${CPU_MODEL} -machine virt,secure=on,virtualization=true \
       -machine gic_version=${QEMU_GIC_VERSION} \
       -machine hee_ram_size=${QEMU_HEE_RAM} \
+      -machine guest_ram_size=${QEMU_GUEST_RAM} \
       -machine ree1_ram_size=${QEMU_REE1_RAM} \
       -machine ree2_ram_size=${QEMU_REE2_RAM} \
       -machine tee_ram_size=${QEMU_TEE_RAM} \
@@ -373,8 +390,9 @@ launch_qemu() {
       -machine boot_android=${BOOT_ANDROID} \
       -machine trusty_sched_policy=${QEMU_TRUSTY_SCHED_POLICY} \
       -machine tee_system_mode=${QEMU_TEE_SYSTEM_MODE} \
+      -machine tee_vendor=${TEE_SPD}
       -smp ${QEMU_CPU_NUM} \
-      -m $(($QEMU_HEE_RAM + $QEMU_REE1_RAM + $QEMU_TEE_RAM)) \
+      -m $(($QEMU_HEE_RAM + $QEMU_GUEST_RAM + $QEMU_TEE_RAM)) \
       -bios ${ATF_BUILDROOT}/images/bl1.bin \
       -kernel ${QEMU_ZIRCON_KERNEL_PATH} \
       -append \"${CMDLINE}\" \
@@ -383,6 +401,7 @@ launch_qemu() {
       ${QEMU_VIRTIO_V9FS_FLAGS} \
       ${QEMU_VIRTIO_PCI_FLAGS} \
       ${QEMU_SERIAL_FLAGS} \
+      ${QEMU_VIRTIO_I2C_FLAGS} \
       ${QEMU_DISK_FLAGS} \
       ${QEMU_DEBUG_FLAGS} \
       ${QEMU_EXTRA_ARGS}"
@@ -426,6 +445,12 @@ launch_qemu() {
   done
 
 } # end of launch_qemu()
+
+if [[ "${QEMU_ACTIVE_HYP}" = "on" ]]; then
+  CMDLINE+="${EARLYCON_VIRT_UART} "
+else
+  CMDLINE+="${EARLYCON_REAL_UART} "
+fi
 
 # Do not pass "TERM=xterm-256color" to expect
 if [[ -z "${QEMU_RUN_CHECK}" ]] && [[ -n $TERM ]]; then
