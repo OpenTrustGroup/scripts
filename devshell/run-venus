@@ -390,7 +390,7 @@ launch_qemu() {
       -machine boot_android=${BOOT_ANDROID} \
       -machine trusty_sched_policy=${QEMU_TRUSTY_SCHED_POLICY} \
       -machine tee_system_mode=${QEMU_TEE_SYSTEM_MODE} \
-      -machine tee_vendor=${TEE_SPD}
+      -machine tee_vendor=${TEE_SPD} \
       -smp ${QEMU_CPU_NUM} \
       -m $(($QEMU_HEE_RAM + $QEMU_GUEST_RAM + $QEMU_TEE_RAM)) \
       -bios ${ATF_BUILDROOT}/images/bl1.bin \
