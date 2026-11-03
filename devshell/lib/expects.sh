@@ -16,7 +16,7 @@ declare FINAL_EXPECT_SCRIPT=""
 readonly HEE_PROMPT_CHECK="${EXPECTS_DIR}/boot/HEE-PROMPT.exp"
 readonly REE_PROMPT_CHECK="${EXPECTS_DIR}/boot/REE-PROMPT.exp"
 
-# expect-init ${FINAL_EXPECT_SCRIPT_NAME} ${QEMU_HEE_PORT} ${QEMU_TEE_PORT} ${QEMU_REE_PORT} ${QEMU_TEE_SYSTEM_MODE}
+# expect-init ${FINAL_EXPECT_SCRIPT_NAME} ${QEMU_HEE_PORT} ${QEMU_TEE_PORT} ${QEMU_REE_PORT} ${QEMU_TEE_SYSTEM_MODE} ${QEMU_ACTIVE_HYP}
 function expect-init {
   FINAL_EXPECT_SCRIPT="${1}"
 cat > "${FINAL_EXPECT_SCRIPT}" << EOF
@@ -24,6 +24,8 @@ cat > "${FINAL_EXPECT_SCRIPT}" << EOF
 
 set NBL_SDK_PATH "$NBL_SDK_PATH"
 set QEMU_TEE_SYSTEM_MODE ${5}
+# "on": the SOS is a guest of the HEE's VMM (run-venus -z), see sos_attach
+set QEMU_ACTIVE_HYP "${6:-off}"
 
 proc printf arg {
     puts -nonewline "\[[clock format [clock seconds] -format %H:%M:%S]\] ([pid]) QEMU-${JOB} \$arg"
@@ -69,6 +71,58 @@ proc connect_to_world {world mypid} {
     set ret(spid) \$spid
     set ret(port) \$port
     return [array get ret]
+}
+
+# With an active hypervisor (run-venus -z) the SOS is a guest of the HEE's
+# VMM: its kernel log (console=vmlog-sink0) goes to the HEE debuglog, as
+# [VM:n] lines on the HEE serial port, and its shell runs on hvc0, the VMM's
+# virtio-console, which \`vmm shell\` on the HEE console attaches to (Ctrl-D
+# detaches). The REE serial port stays silent.
+#
+# vmm shell passes on one key per poll of its input and holds back what
+# arrives at once until the next key: type into it slowly (send -s).
+set send_slow {1 .05}
+
+# Attach the HEE console to the SOS shell: 1 at its prompt, 0 on timeout.
+proc sos_attach {hee secs} {
+    set deadline [expr {[clock seconds] + \$secs}]
+    set attached 0
+    while {!\$attached && [clock seconds] < \$deadline} {
+        send -i \$hee "vmm shell\r"
+        set timeout 10
+        expect {
+            -i \$hee "controller->GetConsole" { set attached 1 }
+            -i \$hee "Failed to connect VM" { expect -i \$hee "\$ "; sleep 2 }
+            -i \$hee timeout { }
+        }
+    }
+    if {!\$attached} { return 0 }
+    # busybox init asks for Enter on hvc0 once the SOS reaches user space
+    while {[clock seconds] < \$deadline} {
+        sleep 1
+        send -s -i \$hee "\r"
+        set timeout 10
+        expect {
+            -i \$hee "Kernel panic" { printf "Linux kernel panic !!!\n"; exit 1 }
+            -i \$hee "Please press Enter to activate this console. " { exp_continue }
+            -i \$hee "root@FVP:/ " { return 1 }
+            -i \$hee timeout { }
+        }
+    }
+    return 0
+}
+
+# Detach the HEE console from the SOS shell, back to the HEE shell.
+proc sos_detach {hee} {
+    send -i \$hee "\x04"
+    set timeout 15
+    expect {
+        -i \$hee timeout {
+            printf "Venus: leaving the SOS console TIMEOUT !!!\n"
+            exit 1
+        }
+        -i \$hee "\$ "
+    }
 }
 
 set mypid [pid]
@@ -167,11 +221,18 @@ function expect-load-cmd {
   local prompt1=""
   local prompt2=""
 
+  local send_opt=""
+  local sos_attach=""
+
   case "${array[0]}" in
     hee) world1="hee"; world2="ree"; prompt1="$ "; prompt2="root@FVP:/ " ;;
     ree) world1="ree"; world2="hee"; prompt1="root@FVP:/ "; prompt2="$ " ;;
     *) usage ; exit 1 ;;
   esac
+  # With an active hypervisor the SOS shell is on the HEE console (vmm shell).
+  if [[ "${array[0]}" == "ree" ]] && [[ "${QEMU_ACTIVE_HYP}" == "on" ]]; then
+    world1="hee"; world2="ree"; prompt2="root@FVP:/ "; send_opt="-s "; sos_attach="true"
+  fi
 
   cat >> "${FINAL_EXPECT_SCRIPT}" << EOF
 ############################################################
@@ -179,10 +240,20 @@ function expect-load-cmd {
 ############################################################
 set cmd_result_code 0
 set loop 0
+EOF
+  if [[ -n "${sos_attach}" ]]; then
+    cat >> "${FINAL_EXPECT_SCRIPT}" << EOF
+if {![sos_attach \$hee 60]} {
+    printf "SOS console TIMEOUT !!!\n"
+    exit 1
+}
+EOF
+  fi
+  cat >> "${FINAL_EXPECT_SCRIPT}" << EOF
 while {\$loop < ${loopmax}} {
   printf "Running: ${command} (loop=\$loop)\n"
   set exp_running [clock clicks -milliseconds]
-  send -i \$${world1} "${command}; echo cmd_result_code=\$?\r"
+  send ${send_opt}-i \$${world1} "${command}; echo cmd_result_code=\$?\r"
   set timeout ${timeout}
   expect {
     timeout {
@@ -209,6 +280,9 @@ while {\$loop < ${loopmax}} {
   incr loop
 }
 EOF
+  if [[ -n "${sos_attach}" ]]; then
+    echo 'sos_detach $hee' >> "${FINAL_EXPECT_SCRIPT}"
+  fi
 }
 
 # args: "${QEMU_RUN_CHECK}" ${JOB} ${EXPECT_JOBS}

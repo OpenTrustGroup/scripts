@@ -409,7 +409,7 @@ launch_qemu() {
     #############################################################################
     ## if test, then run the expect and check the result.
     if [[ -n "${QEMU_RUN_CHECK}" ]]; then
-      expect-init ${EXPECT_SCRIPT} ${QEMU_HEE_PORT} ${QEMU_TEE_PORT} ${QEMU_REE_PORT} ${QEMU_TEE_SYSTEM_MODE}
+      expect-init ${EXPECT_SCRIPT} ${QEMU_HEE_PORT} ${QEMU_TEE_PORT} ${QEMU_REE_PORT} ${QEMU_TEE_SYSTEM_MODE} ${QEMU_ACTIVE_HYP}
       expect-load-scripts "${QEMU_RUN_CHECK}" ${JOB} ${EXPECT_JOBS}
       exec expect ${EXPECT_OPT} ${EXPECT_SCRIPT} & EXPECT_CPIDS+=("$!")
     #############################################################################

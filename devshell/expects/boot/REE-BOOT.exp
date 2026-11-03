@@ -1,59 +1,91 @@
-set timeout 120
-expect {
-    -i $ree timeout {
+if { $QEMU_ACTIVE_HYP eq "on" } {
+    # The SOS is a guest of the HEE's VMM and prints nothing on the REE
+    # serial port: its shell is on hvc0, reached from the HEE console
+    # (sos_attach), and its kernel log (console=vmlog-sink0) comes out on the
+    # HEE serial port as [VM:n] lines.
+    if {![sos_attach $hee 180]} {
         printf "Linux bootup TIMEOUT !!!\n"
         exit 1
     }
-    "Kernel panic" {
-        printf "Linux kernel panic !!!\n"
-        exit 1
+
+    printf "Wait for RNG device init...\n"
+    set timeout 60
+    send -s -i $hee "dd if=/dev/random of=/dev/null bs=100 count=1\r"
+    expect {
+        -i $hee timeout {
+            printf "RNG device init TIMEOUT!!\n"
+            exit 1
+        }
+
+        -i $hee "root@FVP:/ "
     }
 
-    -i $ree "Please press Enter to activate this console. "
-}
+    # A kernel message has to come back to the HEE through vmlog-sink0. The
+    # shell computes the number, so the echo of the command cannot match.
+    printf "Wait for the SOS kernel log on the HEE console...\n"
+    send -s -i $hee "echo \"REE-BOOT: console=vmlog-sink0 \$((6*7))\" > /dev/kmsg\r"
+    set timeout 30
+    expect {
+        -i $hee timeout {
+            printf "SOS kernel log (vmlog-sink0) TIMEOUT !!!\n"
+            exit 1
+        }
 
-printf "Wait for RNG device init...\n"
-set timeout 60
-send -i $ree "\r"
-sleep 1
-send -i $ree "dd if=/dev/random of=/dev/null bs=100 count=1\r"
-expect {
-    -i $ree timeout {
-        printf "RNG device init TIMEOUT!!\n"
-        exit 1
+        -i $hee -re {\[VM:-?[0-9]+\][^\r\n]*REE-BOOT: console=vmlog-sink0 42}
     }
 
-    -i $ree "root@FVP:/ "
-}
-
-printf "Wait 5 secs for storage service ready...\n"
-sleep 5
-send -i $ree "\r"
-set timeout 5
-expect {
-    -i $ree timeout {
-        printf "Console activate TIMEOUT !!!\n"
-        exit 1
-    }
-    -i $ree "root@FVP:/ "
-}
-printf "Venus REE is ready.\n"
-
-if { "$env(USE_RELEASE)" != "true" } {
-    send -i $console "ST=/system/test; echo \$ST\r"
+    printf "Wait 5 secs for storage service ready...\n"
+    sleep 5
+    send -s -i $hee "\r"
     set timeout 5
     expect {
-        -i $console timeout {
-            printf "Venus: sending enter TIMEOUT !!!\n"
+        -i $hee timeout {
+            printf "Console activate TIMEOUT !!!\n"
             exit 1
         }
-        -i $console "/system/test"
+        -i $hee "root@FVP:/ "
     }
+    sos_detach $hee
+    printf "Venus REE is ready.\n"
+} else {
+    set timeout 120
     expect {
-        -i $console timeout {
-            printf "Venus: setup ST=/system/test TIMEOUT !!!\n"
+        -i $ree timeout {
+            printf "Linux bootup TIMEOUT !!!\n"
             exit 1
         }
-        -i $console "$ "
+        "Kernel panic" {
+            printf "Linux kernel panic !!!\n"
+            exit 1
+        }
+
+        -i $ree "Please press Enter to activate this console. "
     }
+
+    printf "Wait for RNG device init...\n"
+    set timeout 60
+    send -i $ree "\r"
+    sleep 1
+    send -i $ree "dd if=/dev/random of=/dev/null bs=100 count=1\r"
+    expect {
+        -i $ree timeout {
+            printf "RNG device init TIMEOUT!!\n"
+            exit 1
+        }
+
+        -i $ree "root@FVP:/ "
+    }
+
+    printf "Wait 5 secs for storage service ready...\n"
+    sleep 5
+    send -i $ree "\r"
+    set timeout 5
+    expect {
+        -i $ree timeout {
+            printf "Console activate TIMEOUT !!!\n"
+            exit 1
+        }
+        -i $ree "root@FVP:/ "
+    }
+    printf "Venus REE is ready.\n"
 }
